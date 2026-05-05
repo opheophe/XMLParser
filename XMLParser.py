@@ -2,7 +2,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import configparser
 import os
+import subprocess
 from pathlib import Path
+from collections import Counter
+from datetime import datetime
 import xml.etree.ElementTree as ET
 import csv
 import pandas as pd
@@ -294,16 +297,15 @@ class XMLParserApp(tk.Tk):
     
     def create_widgets(self):
         # Main container with 20/80 split
-        self.upper_frame = tk.Frame(self, height=160)  # 20% of 800
+        self.upper_frame = tk.Frame(self)
         self.upper_frame.pack(fill=tk.X)
-        self.upper_frame.pack_propagate(False)
-        
+
         self.lower_frame = tk.Frame(self)
         self.lower_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         # Upper frame contents (left-aligned)
         button_frame = tk.Frame(self.upper_frame)
-        button_frame.pack(pady=20, padx=20, anchor=tk.W)
+        button_frame.pack(pady=5, padx=10, anchor=tk.W)
         
         self.open_button = tk.Button(button_frame, text="Open", command=self.open_file)
         self.open_button.pack(side=tk.LEFT, padx=10)
@@ -317,26 +319,16 @@ class XMLParserApp(tk.Tk):
         # Export CSV button
         self.export_button = tk.Button(button_frame, text="Export CSV", command=self.export_csv, state="disabled")
         self.export_button.pack(side=tk.LEFT, padx=10)
+
+        # Export Excel button
+        self.export_excel_button = tk.Button(button_frame, text="Export Excel", command=self.export_excel, state="disabled")
+        self.export_excel_button.pack(side=tk.LEFT, padx=10)
         
-        # Lower frame - Treeview with scrollbars
-        self.tree_frame = tk.Frame(self.lower_frame)
-        self.tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Treeview
-        self.tree = ttk.Treeview(self.tree_frame)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # Scrollbars
-        vsb = ttk.Scrollbar(self.tree_frame, orient="vertical", command=self.tree.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        hsb = ttk.Scrollbar(self.lower_frame, orient="horizontal", command=self.tree.xview)
-        hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        
-        # Store parsed data
-        self.parsed_data = []
-        self.current_columns = []
+        # Notebook
+        self.notebook = ttk.Notebook(self.lower_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.tab_data = []  # list of (tab_name, columns, rows)
     
     def open_file(self):
         initial_dir = self.settings_manager.last_directory if self.settings_manager.last_directory else "."
@@ -368,11 +360,8 @@ class XMLParserApp(tk.Tk):
                 self.config_var.set(current)
             elif last_selected in config_names:
                 self.config_var.set(last_selected)
-            elif current == "No configs":
+            else:
                 self.config_var.set(config_names[0])
-            elif current and current not in config_names:
-                # Previously selected config was deleted, select next one
-                self.config_var.set(config_names[0] if config_names else "No configs")
     
     def on_config_selected(self, event=None):
         selected = self.config_var.get()
@@ -396,49 +385,182 @@ class XMLParserApp(tk.Tk):
         self.settings_manager.save()
         self.destroy()
     
+    def find_record_info(self, elem):
+        """Return (record_tag, record_parent) for the first repeating child tag found, or (None, None)."""
+        child_tag_counts = Counter(child.tag for child in elem)
+        for tag, count in child_tag_counts.items():
+            if count > 1:
+                return tag, elem
+        for child in elem:
+            if child_tag_counts[child.tag] == 1:
+                result_tag, result_parent = self.find_record_info(child)
+                if result_tag is not None:
+                    return result_tag, result_parent
+        return None, None
+
+    def get_leaves_excluding_tag(self, elem, exclude_tag, path="", leaves=None):
+        """Collect leaf nodes from elem, skipping all subtrees rooted at exclude_tag."""
+        if leaves is None:
+            leaves = []
+        current_path = f"{path}/{elem.tag}" if path else elem.tag
+        if elem.tag == exclude_tag:
+            return leaves
+        if len(elem) == 0:
+            text = elem.text.strip() if elem.text else ""
+            leaves.append({'path': current_path, 'tag': elem.tag, 'text': text, 'attributes': dict(elem.attrib)})
+        else:
+            for child in elem:
+                self.get_leaves_excluding_tag(child, exclude_tag, current_path, leaves)
+        return leaves
+
+    def element_to_rows(self, elem):
+        """Convert an element to (columns, rows), using the first repeating child as the row boundary."""
+        record_tag, record_parent = self.find_record_info(elem)
+
+        if record_tag is None:
+            return self.leaves_to_table(self.get_leaf_nodes(elem))
+
+        parent_leaves = self.get_leaves_excluding_tag(elem, record_tag)
+        all_record_leaves = [
+            parent_leaves + self.get_leaf_nodes(record_elem)
+            for record_elem in record_parent.findall(record_tag)
+        ]
+
+        all_paths = sorted(set(leaf['path'] for leaves in all_record_leaves for leaf in leaves))
+        amount_columns = set()
+        columns = []
+        for col in all_paths:
+            if col.endswith('/Amt') or col.endswith('/RmtdAmt'):
+                columns.append(f"{col}@Value")
+                columns.append(f"{col}@Ccy")
+                amount_columns.add(col)
+            else:
+                columns.append(col)
+
+        rows = []
+        for leaves in all_record_leaves:
+            row = {}
+            for leaf in leaves:
+                path = leaf['path']
+                value = leaf['text']
+                if path in amount_columns:
+                    row[f"{path}@Value"] = value
+                    row[f"{path}@Ccy"] = leaf['attributes'].get('Ccy', '')
+                else:
+                    if leaf['attributes']:
+                        attr_parts = [f"{k}={v}" for k, v in leaf['attributes'].items()]
+                        value = f"{value} ({' '.join(attr_parts)})" if value else ' '.join(attr_parts)
+                    row[path] = value
+            rows.append(row)
+
+        return columns, rows
+
+    def leaves_to_table(self, leaves):
+        """Convert leaf nodes to (columns, rows) using occurrence-index row assignment."""
+        raw_columns = sorted(set(leaf['path'] for leaf in leaves))
+        amount_columns = set()
+        columns = []
+        for col in raw_columns:
+            if col.endswith('/Amt') or col.endswith('/RmtdAmt'):
+                columns.append(f"{col}@Value")
+                columns.append(f"{col}@Ccy")
+                amount_columns.add(col)
+            else:
+                columns.append(col)
+
+        path_counts = Counter(leaf['path'] for leaf in leaves)
+        num_rows = max(path_counts.values()) if path_counts else 1
+
+        occurrence_counters = {}
+        rows = [{} for _ in range(num_rows)]
+
+        for leaf in leaves:
+            path = leaf['path']
+            occurrence_counters.setdefault(path, 0)
+            row_idx = occurrence_counters[path]
+            occurrence_counters[path] += 1
+
+            if row_idx >= num_rows:
+                continue
+
+            value = leaf['text']
+            if path in amount_columns:
+                rows[row_idx][f"{path}@Value"] = value
+                rows[row_idx][f"{path}@Ccy"] = leaf['attributes'].get('Ccy', '')
+            else:
+                if leaf['attributes']:
+                    attr_parts = [f"{k}={v}" for k, v in leaf['attributes'].items()]
+                    value = f"{value} ({' '.join(attr_parts)})" if value else ' '.join(attr_parts)
+                rows[row_idx][path] = value
+
+        return columns, rows
+
+    def parse_with_config(self, root, config_tags):
+        """Return list of (tab_name, columns, rows) using config tags to split into tabs."""
+        tag_elements = {tag: root.findall(f".//{tag}") for tag in config_tags}
+
+        tabs = []
+        for tag in config_tags:
+            elements = tag_elements.get(tag, [])
+            if not elements:
+                continue
+
+            if len(elements) == 1:
+                columns, rows = self.element_to_rows(elements[0])
+                tabs.append((tag, columns, rows))
+            else:
+                for i, elem in enumerate(elements):
+                    columns, rows = self.element_to_rows(elem)
+                    tabs.append((f"{tag} {i + 1}", columns, rows))
+
+        return tabs
+
+    def get_leaf_nodes(self, elem, path="", leaves=None):
+        if leaves is None:
+            leaves = []
+
+        current_path = f"{path}/{elem.tag}" if path else elem.tag
+
+        if len(elem) == 0:
+            text = elem.text.strip() if elem.text else ""
+            leaves.append({
+                'path': current_path,
+                'tag': elem.tag,
+                'text': text,
+                'attributes': dict(elem.attrib)
+            })
+        else:
+            for child in elem:
+                self.get_leaf_nodes(child, current_path, leaves)
+
+        return leaves
+
     def parse_and_display_xml(self, file_path):
         try:
-            # Parse XML and strip namespaces
             tree = ET.parse(file_path)
             root = tree.getroot()
-            
-            # Strip all namespaces from the tree
             root = self.strip_namespaces(root)
-            
-            # Find deepest repeating element tag
-            record_tag = self.find_deepest_repeating_tag(root)
-            
-            if not record_tag:
-                messagebox.showwarning("Warning", "No repeating elements found in XML.")
+
+            selected_config = self.config_var.get()
+            config_tags = self.settings_manager.get_config(selected_config) if selected_config and selected_config != "No configs" else []
+
+            if config_tags:
+                tabs = self.parse_with_config(root, config_tags)
+            else:
+                columns, rows = self.element_to_rows(root)
+                if not rows:
+                    messagebox.showwarning("Warning", "No data found in XML.")
+                    return
+                tabs = [("Sheet1", columns, rows)]
+
+            if not tabs:
+                messagebox.showwarning("Warning", "No data found for the selected config tags.")
                 return
-            
-            print(f"Found repeating tag: {record_tag}")
-            
-            # Find all elements with this tag
-            records = root.findall(f".//{record_tag}")
-            
-            if not records:
-                messagebox.showwarning("Warning", f"No records found with tag '{record_tag}'.")
-                return
-            
-            # Collect all possible columns by sampling records
-            all_columns = set()
-            for record in records[:50]:  # Sample first 50
-                cols = self.get_element_columns(record)
-                all_columns.update(cols)
-            
-            self.current_columns = sorted(all_columns)
-            
-            # Convert records to rows
-            self.parsed_data = []
-            for record in records:
-                row = self.element_to_row(record, self.current_columns)
-                self.parsed_data.append(row)
-            
-            # Display in treeview
-            self.display_in_treeview()
+
+            self.display_tabs(tabs)
             self.export_button.config(state="normal")
-            
+            self.export_excel_button.config(state="normal")
+
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -465,178 +587,121 @@ class XMLParserApp(tk.Tk):
         
         return elem
     
-    def get_element_columns(self, elem, prefix=""):
-        """Get all column paths from an element"""
-        columns = set()
-        
-        current_path = f"{prefix}/{elem.tag}" if prefix else elem.tag
-        
-        # Add text content column (even if has children, element might have text)
-        columns.add(current_path)
-        
-        # Add attributes
-        for attr in elem.attrib:
-            attr_col = f"{current_path}@{attr}"
-            columns.add(attr_col)
-        
-        # Recurse into children
-        for child in elem:
-            columns.update(self.get_element_columns(child, current_path))
-        
-        return columns
+    def display_tabs(self, tabs):
+        """Replace all notebook tabs with freshly built treeviews."""
+        for tab_id in self.notebook.tabs():
+            self.notebook.forget(tab_id)
+        self.tab_data = []
+
+        for tab_name, columns, rows in tabs:
+            frame = tk.Frame(self.notebook)
+            frame.rowconfigure(0, weight=1)
+            frame.columnconfigure(0, weight=1)
+
+            tree = ttk.Treeview(frame, columns=columns, show="headings")
+            tree.grid(row=0, column=0, sticky="nsew")
+
+            vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+            vsb.grid(row=0, column=1, sticky="ns")
+            hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+            hsb.grid(row=1, column=0, sticky="ew")
+
+            tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+            for col in columns:
+                tree.heading(col, text=col)
+                max_chars = len(col)
+                for row in rows[:100]:
+                    val = str(row.get(col, ""))
+                    if len(val) > max_chars:
+                        max_chars = len(val)
+                width = min(max(max_chars * 8, 50), 300)
+                tree.column(col, width=width, minwidth=50, stretch=True)
+
+            for row in rows[:1000]:
+                tree.insert("", tk.END, values=[row.get(col, "") for col in columns])
+
+            self.notebook.add(frame, text=tab_name)
+            self.tab_data.append((tab_name, columns, rows))
     
-    def element_to_row(self, elem, columns, prefix=""):
-        """Convert element to row dict"""
-        row = {col: "" for col in columns}
-        
-        # Current path
-        current_path = f"{prefix}/{elem.tag}" if prefix else elem.tag
-        
-        # Text content (not just leaf nodes - capture from all elements)
-        if elem.text and elem.text.strip():
-            if current_path in row:
-                row[current_path] = elem.text.strip()
-        
-        # Attributes
-        for attr, value in elem.attrib.items():
-            attr_col = f"{current_path}@{attr}"
-            if attr_col in row:
-                row[attr_col] = value
-        
-        # Recurse into children
-        for child in elem:
-            child_row = self.element_to_row(child, columns, current_path)
-            for col, val in child_row.items():
-                if val:
-                    row[col] = val
-        
-        return row
-    
-    def find_deepest_repeating_tag(self, root):
-        """Find the deepest XPath where elements repeat"""
-        all_paths = []
-        
-        def get_tag(elem):
-            """Get tag without namespace"""
-            if '}' in elem.tag:
-                return elem.tag.split('}')[-1]
-            return elem.tag
-        
-        def traverse(elem, path="", depth=0):
-            tag = get_tag(elem)
-            
-            # Build path
-            if path:
-                current_path = f"{path}/{tag}"
-            else:
-                current_path = tag
-            
-            # Count children of same tag
-            child_tags = {}
-            children = list(elem)
-            for child in children:
-                child_tag = get_tag(child)
-                child_tags[child_tag] = child_tags.get(child_tag, 0) + 1
-            
-            # Find repeating children at this level
-            for child_tag, count in child_tags.items():
-                if count > 1:
-                    # Build simple XPath - just the repeating tag name
-                    # Pandas works better with simple tag names
-                    all_paths.append((depth, child_tag, count))
-            
-            # Recurse deeper
-            for child in children:
-                traverse(child, current_path, depth + 1)
-        
-        traverse(root)
-        
-        if not all_paths:
-            return None
-        
-        # Sort by depth (shallowest first) - this is the record level
-        # Shallowest repeating element = the actual record container
-        all_paths.sort(key=lambda x: x[0])  # Shallowest first
-        record_tag = all_paths[0][1]
-        record_depth = all_paths[0][0]
-        print(f"Found {all_paths[0][2]} repeating elements with tag: {record_tag} at depth {record_depth}")
-        
-        return record_tag
-    
-    def flatten_dataframe(self, df):
-        """Recursively flatten nested columns in DataFrame"""
-        max_depth = 10  # Prevent infinite loops
-        
-        for _ in range(max_depth):
-            needs_flattening = False
-            new_df = df.copy()
-            
-            for col in list(new_df.columns):
-                # Check if column contains dictionaries or lists
-                sample = new_df[col].dropna().iloc[0] if not new_df[col].dropna().empty else None
-                
-                if isinstance(sample, dict):
-                    needs_flattening = True
-                    # Flatten dict column
-                    flattened = new_df[col].apply(lambda x: x if isinstance(x, dict) else {})
-                    for key in flattened.iloc[0].keys() if flattened.iloc[0] else []:
-                        new_df[f"{col}/{key}"] = flattened.apply(lambda x: x.get(key, ""))
-                    new_df = new_df.drop(columns=[col])
-                    
-                elif isinstance(sample, list) and len(sample) > 0 and isinstance(sample[0], dict):
-                    needs_flattening = True
-                    # For now, skip list columns or convert to string
-                    new_df[col] = new_df[col].apply(lambda x: str(x) if isinstance(x, list) else x)
-            
-            df = new_df
-            if not needs_flattening:
-                break
-        
-        return df
-    
-    def display_in_treeview(self):
-        """Display parsed data in Treeview"""
-        # Clear existing
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        
-        # Configure columns
-        self.tree["columns"] = self.current_columns
-        self.tree["show"] = "headings"
-        
-        # Set column headings
-        for col in self.current_columns:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=100, minwidth=50)
-        
-        # Insert data
-        for i, row in enumerate(self.parsed_data[:1000]):  # Limit to 1000 rows for performance
-            values = [row.get(col, "") for col in self.current_columns]
-            self.tree.insert("", tk.END, values=values)
-    
+    def default_filename(self, ext):
+        return datetime.now().strftime(f"Output %Y-%m-%d %H%M{ext}")
+
+    def show_export_dialog(self, file_path):
+        dialog = tk.Toplevel(self)
+        dialog.title("Export complete")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        tk.Label(dialog, text=f"Saved to:\n{file_path}", justify=tk.LEFT, wraplength=400).pack(padx=20, pady=(15, 10))
+
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(padx=20, pady=(0, 15))
+
+        tk.Button(btn_frame, text="Open location",
+                  command=lambda: [subprocess.Popen(f'explorer /select,"{file_path}"'), dialog.destroy()]).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Open file",
+                  command=lambda: [os.startfile(file_path), dialog.destroy()]).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="OK",
+                  command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
     def export_csv(self):
-        """Export parsed data to CSV"""
-        if not self.parsed_data:
+        if not self.tab_data:
             messagebox.showwarning("Warning", "No data to export.")
             return
-        
+
+        current_idx = self.notebook.index(self.notebook.select())
+        tab_name, columns, rows = self.tab_data[current_idx]
+
         file_path = filedialog.asksaveasfilename(
             title="Export to CSV",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            defaultextension=".csv"
+            defaultextension=".csv",
+            initialfile=self.default_filename(".csv")
         )
-        
+
         if not file_path:
             return
-        
+
         try:
-            # Create DataFrame from parsed data and export
-            df = pd.DataFrame(self.parsed_data, columns=self.current_columns)
+            df = pd.DataFrame(rows, columns=columns)
             df.to_csv(file_path, index=False, encoding='utf-8')
-            
-            messagebox.showinfo("Success", f"Exported {len(self.parsed_data)} rows to {file_path}")
+            self.show_export_dialog(file_path)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export CSV: {str(e)}")
+
+    def export_excel(self):
+        if not self.tab_data:
+            messagebox.showwarning("Warning", "No data to export.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Export to Excel",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            defaultextension=".xlsx",
+            initialfile=self.default_filename(".xlsx")
+        )
+
+        if not file_path:
+            return
+
+        try:
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                for tab_name, columns, rows in self.tab_data:
+                    df = pd.DataFrame(rows, columns=columns)
+                    for col in df.columns:
+                        if col.endswith('@Value'):
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                    df.to_excel(writer, sheet_name=tab_name[:31], index=False)
+            self.show_export_dialog(file_path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export Excel: {str(e)}")
 
 
 if __name__ == "__main__":
