@@ -1,3 +1,4 @@
+import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import configparser
@@ -232,16 +233,18 @@ class ConfigsDialog(tk.Toplevel):
 
         self.merge_tree = ttk.Treeview(
             table_frame,
-            columns=("action", "source", "target"),
+            columns=("action", "source", "target", "format"),
             show="headings",
             height=8
         )
         self.merge_tree.heading("action", text="Action")
         self.merge_tree.heading("source", text="Source Column")
         self.merge_tree.heading("target", text="Target Name")
+        self.merge_tree.heading("format", text="Format")
         self.merge_tree.column("action", width=80, minwidth=70, stretch=False)
-        self.merge_tree.column("source", width=250, minwidth=100, stretch=True)
-        self.merge_tree.column("target", width=110, minwidth=70, stretch=True)
+        self.merge_tree.column("source", width=220, minwidth=100, stretch=True)
+        self.merge_tree.column("target", width=100, minwidth=70, stretch=True)
+        self.merge_tree.column("format", width=70, minwidth=60, stretch=False)
 
         merge_vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.merge_tree.yview)
         self.merge_tree.configure(yscrollcommand=merge_vsb.set)
@@ -310,8 +313,9 @@ class ConfigsDialog(tk.Toplevel):
             action = vals[0].strip() if len(vals) > 0 else "New Line"
             source = vals[1].strip() if len(vals) > 1 else ""
             target = vals[2].strip() if len(vals) > 2 else ""
+            fmt = vals[3].strip() if len(vals) > 3 else ""
             if source:
-                merge.append(f"{action}; {source}; {target}")
+                merge.append(f"{action}; {source}; {target}; {fmt}")
         return tags, merge
 
     def _load_config(self, config_name):
@@ -337,13 +341,16 @@ class ConfigsDialog(tk.Toplevel):
             action = parts[0] if len(parts) > 0 else "New Line"
             source = parts[1] if len(parts) > 1 else ""
             target = parts[2] if len(parts) > 2 else ""
+            fmt = parts[3] if len(parts) > 3 else ""
             if action not in ("New Line", "Merge", "Hide"):
                 # Old format was Target; Source; Conflict — migrate on load
                 if target in ("New Line", "Merge", "Hide"):
                     action, target = target, action
                 else:
                     action = "New Line"
-            self.merge_tree.insert("", tk.END, values=(action, source, target))
+            if fmt not in ("", "String", "Amount"):
+                fmt = ""
+            self.merge_tree.insert("", tk.END, values=(action, source, target, fmt))
 
     def close_and_save(self):
         if self.current_config:
@@ -363,16 +370,18 @@ class ConfigsDialog(tk.Toplevel):
         if not item:
             return
         col_idx = int(col_id[1:]) - 1
-        col_names = ("action", "source", "target")
+        col_names = ("action", "source", "target", "format")
         col_name = col_names[col_idx]
         bbox = self.merge_tree.bbox(item, col_id)
         if not bbox:
             return
         x, y, w, h = bbox
         current = self.merge_tree.set(item, col_name)
-        if col_name == "action":
-            editor = ttk.Combobox(self.merge_tree, values=["New Line", "Merge", "Hide"], state="readonly")
-            editor.set(current if current in ("New Line", "Merge", "Hide") else "New Line")
+        if col_name in ("action", "format"):
+            dropdown_values = (["New Line", "Merge", "Hide"] if col_name == "action"
+                               else ["", "String", "Amount"])
+            editor = ttk.Combobox(self.merge_tree, values=dropdown_values, state="readonly")
+            editor.set(current if current in dropdown_values else dropdown_values[0])
             editor.place(x=x, y=y, width=w, height=h)
             editor.focus()
             def commit_combo(event=None, _editor=editor, _item=item, _col=col_name):
@@ -396,7 +405,7 @@ class ConfigsDialog(tk.Toplevel):
             editor.bind("<Escape>", cancel_entry)
 
     def add_merge_row(self):
-        item = self.merge_tree.insert("", tk.END, values=("New Line", "", ""))
+        item = self.merge_tree.insert("", tk.END, values=("New Line", "", "", ""))
         self.merge_tree.selection_set(item)
         self.merge_tree.see(item)
 
@@ -545,7 +554,7 @@ class ConfigsDialog(tk.Toplevel):
             "\n"
             "RENAME AND MERGE COLUMNS\n"
             "────────────────────────\n"
-            "The table has three columns:\n"
+            "The table has four columns:\n"
             "\n"
             "  Action        — What to do with the source column:\n"
             "\n"
@@ -558,16 +567,22 @@ class ConfigsDialog(tk.Toplevel):
             "              Example: 'Main St' + '12' → 'Main St 12'\n"
             "\n"
             "    Hide      The source column is removed from the output.\n"
-            "              Target Name is ignored for hidden columns.\n"
+            "              Target Name and Format are ignored.\n"
             "\n"
             "  Source Column — The XML path of the source column.\n"
             "  Target Name   — The display name for the output column\n"
             "                  (ignored when Action is Hide).\n"
+            "  Format        — How the column is typed in Excel export:\n"
+            "\n"
+            "    (blank)   Default behaviour — amount columns ending in\n"
+            "              @Value are numeric; all others stay as text.\n"
+            "    String    Force the column to text.\n"
+            "    Amount    Force the column to numeric (like @Value).\n"
             "\n"
             "• Multiple rows with the same Target Name map several source\n"
             "  columns into one output column.\n"
             "• Duplicate values across sources are never repeated.\n"
-            "• Double-click any cell to edit it. The Action cell opens\n"
+            "• Double-click any cell to edit it. Action and Format open\n"
             "  a dropdown; other cells accept free text.\n"
         )
 
@@ -616,7 +631,10 @@ class XMLParserApp(tk.Tk):
 
     def open_program_folder(self):
         folder = os.path.dirname(os.path.abspath(__file__))
-        subprocess.Popen(f'explorer "{folder}"')
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", folder])
+        else:
+            subprocess.Popen(f'explorer "{folder}"')
     
     def create_widgets(self):
         # Main container with 20/80 split
@@ -656,7 +674,7 @@ class XMLParserApp(tk.Tk):
         self.notebook = ttk.Notebook(self.lower_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.tab_data = []  # list of (tab_name, columns, rows)
+        self.tab_data = []  # list of (tab_name, columns, rows, col_formats)
     
     def open_file(self):
         initial_dir = self.settings_manager.last_directory if self.settings_manager.last_directory else "."
@@ -795,20 +813,22 @@ class XMLParserApp(tk.Tk):
 
     def apply_column_merges(self, columns, rows, merge_rules):
         if not merge_rules:
-            return columns, rows
+            return columns, rows, {}
 
         hide_cols = set()
         target_to_sources = {}
         target_action_mode = {}
+        target_format = {}
         for rule in merge_rules:
             if ';' not in rule:
                 continue
-            parts = rule.split(';', 2)
+            parts = rule.split(';', 3)
             if len(parts) < 2:
                 continue
             action = parts[0].strip()
             source = parts[1].strip()
             target = parts[2].strip() if len(parts) > 2 else ""
+            fmt = parts[3].strip() if len(parts) > 3 else ""
             if action not in ("New Line", "Merge", "Hide"):
                 # Old format was Target; Source; Conflict — migrate transparently
                 if target in ("New Line", "Merge", "Hide"):
@@ -827,6 +847,8 @@ class XMLParserApp(tk.Tk):
                     target_action_mode[target] = action
                 if source not in target_to_sources[target]:
                     target_to_sources[target].append(source)
+                if fmt in ("String", "Amount"):
+                    target_format[target] = fmt
 
         all_source_cols = {src for srcs in target_to_sources.values() for src in srcs}
 
@@ -873,7 +895,7 @@ class XMLParserApp(tk.Tk):
                         new_row[col] = row.get(col, "")
                 new_rows.append(new_row)
 
-        return new_columns, new_rows
+        return new_columns, new_rows, target_format
 
     def deduplicate_amount_values(self, columns, rows):
         value_cols = {col for col in columns if col.endswith('@Value')}
@@ -915,15 +937,15 @@ class XMLParserApp(tk.Tk):
                     if not all_columns:
                         all_columns = columns
                     all_rows.extend(rows)
-                all_columns, all_rows = self.apply_column_merges(all_columns, all_rows, merge_rules or [])
+                all_columns, all_rows, col_formats = self.apply_column_merges(all_columns, all_rows, merge_rules or [])
                 all_rows = self.deduplicate_amount_values(all_columns, all_rows)
-                tabs.append((tag, all_columns, all_rows))
+                tabs.append((tag, all_columns, all_rows, col_formats))
             else:
                 for i, elem in enumerate(elements):
                     columns, rows = self.element_to_rows(elem)
-                    columns, rows = self.apply_column_merges(columns, rows, merge_rules or [])
+                    columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules or [])
                     rows = self.deduplicate_amount_values(columns, rows)
-                    tabs.append((f"{tag} {i + 1}", columns, rows))
+                    tabs.append((f"{tag} {i + 1}", columns, rows, col_formats))
 
         return tabs
 
@@ -962,12 +984,12 @@ class XMLParserApp(tk.Tk):
                 tabs = self.parse_with_config(root, config_tags, merge_rules)
             else:
                 columns, rows = self.element_to_rows(root)
-                columns, rows = self.apply_column_merges(columns, rows, merge_rules)
+                columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules)
                 rows = self.deduplicate_amount_values(columns, rows)
                 if not rows:
                     messagebox.showwarning("Warning", "No data found in XML.")
                     return
-                tabs = [("Sheet1", columns, rows)]
+                tabs = [("Sheet1", columns, rows, col_formats)]
 
             if not tabs:
                 messagebox.showwarning("Warning", "No data found for the selected config tags.")
@@ -1009,7 +1031,7 @@ class XMLParserApp(tk.Tk):
             self.notebook.forget(tab_id)
         self.tab_data = []
 
-        for tab_name, columns, rows in tabs:
+        for tab_name, columns, rows, col_formats in tabs:
             frame = tk.Frame(self.notebook)
             frame.rowconfigure(0, weight=1)
             frame.columnconfigure(0, weight=1)
@@ -1038,7 +1060,7 @@ class XMLParserApp(tk.Tk):
                 tree.insert("", tk.END, values=[row.get(col, "") for col in columns])
 
             self.notebook.add(frame, text=tab_name)
-            self.tab_data.append((tab_name, columns, rows))
+            self.tab_data.append((tab_name, columns, rows, col_formats))
     
     def default_filename(self, ext, tab_name=""):
         base = datetime.now().strftime(f"%Y-%m-%d %H%M%S")
@@ -1057,11 +1079,25 @@ class XMLParserApp(tk.Tk):
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(padx=20, pady=(0, 15))
 
+        def open_location():
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", file_path])
+            else:
+                subprocess.Popen(f'explorer /select,"{file_path}"')
+            dialog.destroy()
+
+        def open_file():
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", file_path])
+            else:
+                os.startfile(file_path)
+            dialog.destroy()
+
         tk.Button(btn_frame, text="Open location",
-                  command=lambda: [subprocess.Popen(f'explorer /select,"{file_path}"'), dialog.destroy()],
+                  command=open_location,
                   bg="#4A90D9", fg="white", activebackground="#357ABD", activeforeground="white").pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="Open file",
-                  command=lambda: [os.startfile(file_path), dialog.destroy()],
+                  command=open_file,
                   bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=5)
         tk.Button(btn_frame, text="OK",
                   command=dialog.destroy,
@@ -1078,7 +1114,7 @@ class XMLParserApp(tk.Tk):
             return
 
         current_idx = self.notebook.index(self.notebook.select())
-        tab_name, columns, rows = self.tab_data[current_idx]
+        tab_name, columns, rows, col_formats = self.tab_data[current_idx]
 
         file_path = filedialog.asksaveasfilename(
             title="Export to CSV",
@@ -1114,11 +1150,14 @@ class XMLParserApp(tk.Tk):
 
         try:
             with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
-                for tab_name, columns, rows in self.tab_data:
+                for tab_name, columns, rows, col_formats in self.tab_data:
                     df = pd.DataFrame(rows, columns=columns)
                     for col in df.columns:
-                        if col.endswith('@Value'):
+                        fmt = col_formats.get(col, "")
+                        if fmt == "Amount" or (not fmt and col.endswith('@Value')):
                             df[col] = pd.to_numeric(df[col], errors='coerce')
+                        elif fmt == "String":
+                            df[col] = df[col].fillna("").astype(str)
                     df.to_excel(writer, sheet_name=tab_name[:31], index=False)
             self.show_export_dialog(file_path)
         except Exception as e:
