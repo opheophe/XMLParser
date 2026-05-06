@@ -183,18 +183,39 @@ class ConfigsDialog(tk.Toplevel):
                                      bg="#3498DB", fg="white", activebackground="#2980B9", activeforeground="white")
         self.info_button.pack(side=tk.LEFT, padx=5)
         
-        # Tags editor
-        values_frame = tk.Frame(self)
-        values_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # Tags table
+        tags_outer = tk.Frame(self)
+        tags_outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        tk.Label(values_frame, text="Tags to extract (one tag per line):").pack(anchor=tk.W)
+        tk.Label(tags_outer, text="Tags to extract:").pack(anchor=tk.W)
 
-        values_scrollbar = tk.Scrollbar(values_frame)
-        values_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tags_table_frame = tk.Frame(tags_outer)
+        tags_table_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.values_text = tk.Text(values_frame, height=8, yscrollcommand=values_scrollbar.set)
-        self.values_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        values_scrollbar.config(command=self.values_text.yview)
+        self.tags_tree = ttk.Treeview(
+            tags_table_frame,
+            columns=("tag", "split"),
+            show="headings",
+            height=6
+        )
+        self.tags_tree.heading("tag", text="Tag")
+        self.tags_tree.heading("split", text="Split Tabs")
+        self.tags_tree.column("tag", width=300, minwidth=100, stretch=True)
+        self.tags_tree.column("split", width=80, minwidth=70, stretch=False)
+
+        tags_vsb = ttk.Scrollbar(tags_table_frame, orient="vertical", command=self.tags_tree.yview)
+        self.tags_tree.configure(yscrollcommand=tags_vsb.set)
+        self.tags_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tags_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.tags_tree.bind("<Double-1>", self.on_tags_cell_edit)
+
+        tags_btn_frame = tk.Frame(tags_outer)
+        tags_btn_frame.pack(fill=tk.X, pady=(3, 0))
+        tk.Button(tags_btn_frame, text="Add Row", command=self.add_tags_row,
+                  bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(tags_btn_frame, text="Delete Row", command=self.delete_tags_row,
+                  bg="#E74C3C", fg="white", activebackground="#C0392B", activeforeground="white").pack(side=tk.LEFT)
 
 
         # Merge columns table
@@ -208,16 +229,16 @@ class ConfigsDialog(tk.Toplevel):
 
         self.merge_tree = ttk.Treeview(
             table_frame,
-            columns=("target", "source", "conflict"),
+            columns=("action", "source", "target"),
             show="headings",
             height=8
         )
-        self.merge_tree.heading("target", text="Target Name")
+        self.merge_tree.heading("action", text="Action")
         self.merge_tree.heading("source", text="Source Column")
-        self.merge_tree.heading("conflict", text="Conflict")
-        self.merge_tree.column("target", width=110, minwidth=70, stretch=True)
+        self.merge_tree.heading("target", text="Target Name")
+        self.merge_tree.column("action", width=80, minwidth=70, stretch=False)
         self.merge_tree.column("source", width=250, minwidth=100, stretch=True)
-        self.merge_tree.column("conflict", width=80, minwidth=70, stretch=False)
+        self.merge_tree.column("target", width=110, minwidth=70, stretch=True)
 
         merge_vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.merge_tree.yview)
         self.merge_tree.configure(yscrollcommand=merge_vsb.set)
@@ -264,19 +285,25 @@ class ConfigsDialog(tk.Toplevel):
         if selection:
             self.save_current_config()
             self.current_config = self.config_listbox.get(selection[0])
-            values = self.settings_manager.get_config(self.current_config)
-            self.values_text.delete("1.0", tk.END)
-            self.values_text.insert("1.0", "\n".join(values))
+            for item in self.tags_tree.get_children():
+                self.tags_tree.delete(item)
+            for entry in self.settings_manager.get_config(self.current_config):
+                parts = [p.strip() for p in entry.split(';')]
+                tag = parts[0] if len(parts) > 0 else ""
+                split = parts[1] if len(parts) > 1 else "Yes"
+                if split not in ("Yes", "No"):
+                    split = "Yes"
+                self.tags_tree.insert("", tk.END, values=(tag, split))
             for item in self.merge_tree.get_children():
                 self.merge_tree.delete(item)
             for rule in self.settings_manager.get_merge_columns(self.current_config):
                 parts = [p.strip() for p in rule.split(';')]
-                target = parts[0] if len(parts) > 0 else ""
+                action = parts[0] if len(parts) > 0 else "New Line"
                 source = parts[1] if len(parts) > 1 else ""
-                conflict = parts[2] if len(parts) > 2 else "New Line"
-                if conflict not in ("New Line", "Merge"):
-                    conflict = "New Line"
-                self.merge_tree.insert("", tk.END, values=(target, source, conflict))
+                target = parts[2] if len(parts) > 2 else ""
+                if action not in ("New Line", "Merge", "Hide"):
+                    action = "New Line"
+                self.merge_tree.insert("", tk.END, values=(action, source, target))
 
     def close_and_save(self):
         self.save_current_config()
@@ -284,17 +311,22 @@ class ConfigsDialog(tk.Toplevel):
 
     def save_current_config(self, event=None):
         if self.current_config:
-            values = self.values_text.get("1.0", tk.END).strip().split("\n")
-            values = [v for v in values if v]
+            values = []
+            for item in self.tags_tree.get_children():
+                vals = self.tags_tree.item(item, "values")
+                tag = vals[0].strip() if len(vals) > 0 else ""
+                split = vals[1].strip() if len(vals) > 1 else "Yes"
+                if tag:
+                    values.append(f"{tag}; {split}")
             self.settings_manager.update_config(self.current_config, values)
             merge = []
             for item in self.merge_tree.get_children():
                 vals = self.merge_tree.item(item, "values")
-                target = vals[0].strip() if len(vals) > 0 else ""
+                action = vals[0].strip() if len(vals) > 0 else "New Line"
                 source = vals[1].strip() if len(vals) > 1 else ""
-                conflict = vals[2].strip() if len(vals) > 2 else "New Line"
-                if target or source:
-                    merge.append(f"{target}; {source}; {conflict}")
+                target = vals[2].strip() if len(vals) > 2 else ""
+                if source:
+                    merge.append(f"{action}; {source}; {target}")
             self.settings_manager.update_merge_columns(self.current_config, merge)
 
     def on_merge_cell_edit(self, event):
@@ -306,16 +338,16 @@ class ConfigsDialog(tk.Toplevel):
         if not item:
             return
         col_idx = int(col_id[1:]) - 1
-        col_names = ("target", "source", "conflict")
+        col_names = ("action", "source", "target")
         col_name = col_names[col_idx]
         bbox = self.merge_tree.bbox(item, col_id)
         if not bbox:
             return
         x, y, w, h = bbox
         current = self.merge_tree.set(item, col_name)
-        if col_name == "conflict":
-            editor = ttk.Combobox(self.merge_tree, values=["New Line", "Merge"], state="readonly")
-            editor.set(current if current in ("New Line", "Merge") else "New Line")
+        if col_name == "action":
+            editor = ttk.Combobox(self.merge_tree, values=["New Line", "Merge", "Hide"], state="readonly")
+            editor.set(current if current in ("New Line", "Merge", "Hide") else "New Line")
             editor.place(x=x, y=y, width=w, height=h)
             editor.focus()
             def commit_combo(event=None, _editor=editor, _item=item, _col=col_name):
@@ -339,7 +371,7 @@ class ConfigsDialog(tk.Toplevel):
             editor.bind("<Escape>", cancel_entry)
 
     def add_merge_row(self):
-        item = self.merge_tree.insert("", tk.END, values=("", "", "New Line"))
+        item = self.merge_tree.insert("", tk.END, values=("New Line", "", ""))
         self.merge_tree.selection_set(item)
         self.merge_tree.see(item)
 
@@ -348,7 +380,59 @@ class ConfigsDialog(tk.Toplevel):
         if selected:
             for item in selected:
                 self.merge_tree.delete(item)
-    
+
+    def on_tags_cell_edit(self, event):
+        region = self.tags_tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+        col_id = self.tags_tree.identify_column(event.x)
+        item = self.tags_tree.identify_row(event.y)
+        if not item:
+            return
+        col_idx = int(col_id[1:]) - 1
+        col_names = ("tag", "split")
+        col_name = col_names[col_idx]
+        bbox = self.tags_tree.bbox(item, col_id)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+        current = self.tags_tree.set(item, col_name)
+        if col_name == "split":
+            editor = ttk.Combobox(self.tags_tree, values=["Yes", "No"], state="readonly")
+            editor.set(current if current in ("Yes", "No") else "Yes")
+            editor.place(x=x, y=y, width=w, height=h)
+            editor.focus()
+            def commit_tags_combo(event=None, _editor=editor, _item=item, _col=col_name):
+                self.tags_tree.set(_item, _col, _editor.get())
+                _editor.destroy()
+            editor.bind("<<ComboboxSelected>>", commit_tags_combo)
+            editor.bind("<FocusOut>", lambda e, _editor=editor: _editor.destroy())
+        else:
+            editor = tk.Entry(self.tags_tree)
+            editor.insert(0, current)
+            editor.select_range(0, tk.END)
+            editor.place(x=x, y=y, width=w, height=h)
+            editor.focus()
+            def commit_tags_entry(event=None, _editor=editor, _item=item, _col=col_name):
+                self.tags_tree.set(_item, _col, _editor.get())
+                _editor.destroy()
+            def cancel_tags_entry(event=None, _editor=editor):
+                _editor.destroy()
+            editor.bind("<Return>", commit_tags_entry)
+            editor.bind("<FocusOut>", commit_tags_entry)
+            editor.bind("<Escape>", cancel_tags_entry)
+
+    def add_tags_row(self):
+        item = self.tags_tree.insert("", tk.END, values=("", "Yes"))
+        self.tags_tree.selection_set(item)
+        self.tags_tree.see(item)
+
+    def delete_tags_row(self):
+        selected = self.tags_tree.selection()
+        if selected:
+            for item in selected:
+                self.tags_tree.delete(item)
+
     def add_config(self):
         dialog = tk.Toplevel(self)
         dialog.title("Add Config")
@@ -405,7 +489,8 @@ class ConfigsDialog(tk.Toplevel):
         
         name = self.config_listbox.get(selection[0])
         if messagebox.askyesno("Confirm", f"Delete config '{name}'?"):
-            self.values_text.delete("1.0", tk.END)
+            for item in self.tags_tree.get_children():
+                self.tags_tree.delete(item)
             for item in self.merge_tree.get_children():
                 self.merge_tree.delete(item)
             self.current_config = None
@@ -422,44 +507,41 @@ class ConfigsDialog(tk.Toplevel):
         text = (
             "TAGS TO EXTRACT\n"
             "───────────────\n"
-            "Enter one XML tag name per line. Each tag is searched for in\n"
-            "the loaded file and becomes a separate tab in the results.\n"
-            "Example:\n"
-            "  GrpHdr\n"
-            "  Ntry\n"
-            "  TxDtls\n"
+            "Each row specifies one XML tag to search for in the loaded file.\n"
+            "\n"
+            "  Tag         — The XML tag name to look for.\n"
+            "  Split Tabs  — What to do when multiple elements with this\n"
+            "                tag are found:\n"
+            "\n"
+            "    Yes  Each instance gets its own tab (Tag 1, Tag 2, …).\n"
+            "    No   All instances are combined into a single tab.\n"
             "\n"
             "RENAME AND MERGE COLUMNS\n"
             "────────────────────────\n"
             "The table has three columns:\n"
             "\n"
-            "  Target Name   — The display name for the output column.\n"
-            "  Source Column — The XML path of the source column to map.\n"
-            "  Conflict      — What to do when a single row has values\n"
-            "                  in more than one source column:\n"
+            "  Action        — What to do with the source column:\n"
             "\n"
-            "    New Line  Multiple values create extra rows (one per\n"
-            "              unique value) so no data is lost.\n"
+            "    New Line  When a single row has values in more than one\n"
+            "              source mapped to the same target, each unique\n"
+            "              value gets its own row so no data is lost.\n"
             "\n"
-            "    Merge     Multiple values are joined into a single cell\n"
-            "              separated by a space. Example: if 'Street' is\n"
-            "              'Main St' and 'Street number' is '12', the\n"
-            "              merged cell becomes 'Main St 12'.\n"
+            "    Merge     Multiple source values are joined into one cell\n"
+            "              separated by a space.\n"
+            "              Example: 'Main St' + '12' → 'Main St 12'\n"
+            "\n"
+            "    Hide      The source column is removed from the output.\n"
+            "              Target Name is ignored for hidden columns.\n"
+            "\n"
+            "  Source Column — The XML path of the source column.\n"
+            "  Target Name   — The display name for the output column\n"
+            "                  (ignored when Action is Hide).\n"
             "\n"
             "• Multiple rows with the same Target Name map several source\n"
             "  columns into one output column.\n"
             "• Duplicate values across sources are never repeated.\n"
-            "• Double-click any cell to edit it. The Conflict cell opens\n"
-            "  a dropdown; all other cells accept free text.\n"
-            "\n"
-            "Special target name:\n"
-            "  Hide  — source columns mapped to 'Hide' are removed from\n"
-            "          the output entirely.\n"
-            "\n"
-            "Examples:\n"
-            "  Amount | NtryDtls/TxDtls/AmtDtls/TxAmt/Amt@Value | New Line\n"
-            "  Amount | NtryDtls/RmtInf/Strd/RfrdDocAmt/RmtdAmt@Value | New Line\n"
-            "  Hide   | NtryDtls/TxDtls/Refs/AcctSvcrRef           | New Line\n"
+            "• Double-click any cell to edit it. The Action cell opens\n"
+            "  a dropdown; other cells accept free text.\n"
         )
 
         tk.Label(info, text=text, justify=tk.LEFT, font=("Courier", 9), padx=15, pady=10).pack()
@@ -500,6 +582,14 @@ class XMLParserApp(tk.Tk):
         settings_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Settings", menu=settings_menu)
         settings_menu.add_command(label="Configs", command=self.open_configs)
+
+        dev_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Dev", menu=dev_menu)
+        dev_menu.add_command(label="Open Folder", command=self.open_program_folder)
+
+    def open_program_folder(self):
+        folder = os.path.dirname(os.path.abspath(__file__))
+        subprocess.Popen(f'explorer "{folder}"')
     
     def create_widgets(self):
         # Main container with 20/80 split
@@ -680,43 +770,46 @@ class XMLParserApp(tk.Tk):
         if not merge_rules:
             return columns, rows
 
+        hide_cols = set()
         target_to_sources = {}
-        target_conflict_mode = {}
+        target_action_mode = {}
         for rule in merge_rules:
             if ';' not in rule:
                 continue
             parts = rule.split(';', 2)
             if len(parts) < 2:
                 continue
-            target = parts[0].strip()
+            action = parts[0].strip()
             source = parts[1].strip()
-            conflict = parts[2].strip() if len(parts) > 2 else "New Line"
-            if conflict not in ("New Line", "Merge"):
-                conflict = "New Line"
-            if not target or not source:
+            target = parts[2].strip() if len(parts) > 2 else ""
+            if action not in ("New Line", "Merge", "Hide"):
+                action = "New Line"
+            if not source:
                 continue
-            if target not in target_to_sources:
-                target_to_sources[target] = []
-                target_conflict_mode[target] = conflict
-            if source not in target_to_sources[target]:
-                target_to_sources[target].append(source)
-
-        if not target_to_sources:
-            return columns, rows
+            if action == "Hide":
+                hide_cols.add(source)
+            else:
+                if not target:
+                    continue
+                if target not in target_to_sources:
+                    target_to_sources[target] = []
+                    target_action_mode[target] = action
+                if source not in target_to_sources[target]:
+                    target_to_sources[target].append(source)
 
         all_source_cols = {src for srcs in target_to_sources.values() for src in srcs}
 
-        # Build new column order, replacing first source occurrence with target name.
-        # Sources mapped to "Hide" are dropped entirely.
+        # Build new column order: drop hidden cols, replace first source with target name.
         new_columns = []
         added_targets = set()
         for col in columns:
+            if col in hide_cols:
+                continue
             if col in all_source_cols:
                 target = next((t for t, srcs in target_to_sources.items() if col in srcs), None)
                 if target and target not in added_targets:
                     added_targets.add(target)
-                    if target.lower() != "hide":
-                        new_columns.append(target)
+                    new_columns.append(target)
             else:
                 new_columns.append(col)
 
@@ -733,7 +826,7 @@ class XMLParserApp(tk.Tk):
 
             # Only "New Line" targets with multiple values drive row expansion.
             new_line_multi = [t for t, vals in target_values.items()
-                              if len(vals) > 1 and target_conflict_mode.get(t) == "New Line"]
+                              if len(vals) > 1 and target_action_mode.get(t) == "New Line"]
             max_expand = max((len(target_values[t]) for t in new_line_multi), default=1)
 
             for i in range(max_expand):
@@ -741,7 +834,7 @@ class XMLParserApp(tk.Tk):
                 for col in new_columns:
                     if col in target_to_sources:
                         vals = target_values[col]
-                        if target_conflict_mode.get(col) == "Merge":
+                        if target_action_mode.get(col) == "Merge":
                             new_row[col] = " ".join(v for v in vals if v)
                         else:
                             new_row[col] = vals[i] if i < len(vals) else ""
@@ -766,19 +859,34 @@ class XMLParserApp(tk.Tk):
         return rows
 
     def parse_with_config(self, root, config_tags, merge_rules=None):
-        tag_elements = {tag: root.findall(f".//{tag}") for tag in config_tags}
+        # config_tags entries are "TagName; SplitTabs" strings
+        tag_entries = []
+        for entry in config_tags:
+            parts = [p.strip() for p in entry.split(';')]
+            tag = parts[0]
+            split = parts[1] if len(parts) > 1 else "Yes"
+            if split not in ("Yes", "No"):
+                split = "Yes"
+            if tag:
+                tag_entries.append((tag, split))
 
         tabs = []
-        for tag in config_tags:
-            elements = tag_elements.get(tag, [])
+        for tag, split in tag_entries:
+            elements = root.findall(f".//{tag}")
             if not elements:
                 continue
 
-            if len(elements) == 1:
-                columns, rows = self.element_to_rows(elements[0])
-                columns, rows = self.apply_column_merges(columns, rows, merge_rules or [])
-                rows = self.deduplicate_amount_values(columns, rows)
-                tabs.append((tag, columns, rows))
+            if split == "No" or len(elements) == 1:
+                # Combine all instances into one tab
+                all_columns, all_rows = [], []
+                for elem in elements:
+                    columns, rows = self.element_to_rows(elem)
+                    if not all_columns:
+                        all_columns = columns
+                    all_rows.extend(rows)
+                all_columns, all_rows = self.apply_column_merges(all_columns, all_rows, merge_rules or [])
+                all_rows = self.deduplicate_amount_values(all_columns, all_rows)
+                tabs.append((tag, all_columns, all_rows))
             else:
                 for i, elem in enumerate(elements):
                     columns, rows = self.element_to_rows(elem)
