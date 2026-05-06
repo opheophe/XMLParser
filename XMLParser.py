@@ -143,6 +143,9 @@ class ConfigsDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
+        self.pending_tags = {}   # {config_name: [tag_entry_strings]}
+        self.pending_merge = {}  # {config_name: [rule_strings]}
+
         self.create_widgets()
         self.refresh_config_list()
 
@@ -283,51 +286,73 @@ class ConfigsDialog(tk.Toplevel):
     def on_config_select(self, event):
         selection = self.config_listbox.curselection()
         if selection:
-            self.save_current_config()
+            if self.current_config:
+                self._buffer_current_edits()
             self.current_config = self.config_listbox.get(selection[0])
-            for item in self.tags_tree.get_children():
-                self.tags_tree.delete(item)
-            for entry in self.settings_manager.get_config(self.current_config):
-                parts = [p.strip() for p in entry.split(';')]
-                tag = parts[0] if len(parts) > 0 else ""
-                split = parts[1] if len(parts) > 1 else "Yes"
-                if split not in ("Yes", "No"):
-                    split = "Yes"
-                self.tags_tree.insert("", tk.END, values=(tag, split))
-            for item in self.merge_tree.get_children():
-                self.merge_tree.delete(item)
-            for rule in self.settings_manager.get_merge_columns(self.current_config):
-                parts = [p.strip() for p in rule.split(';')]
-                action = parts[0] if len(parts) > 0 else "New Line"
-                source = parts[1] if len(parts) > 1 else ""
-                target = parts[2] if len(parts) > 2 else ""
-                if action not in ("New Line", "Merge", "Hide"):
+            self._load_config(self.current_config)
+
+    def _buffer_current_edits(self):
+        tags, merge = self._read_ui()
+        self.pending_tags[self.current_config] = tags
+        self.pending_merge[self.current_config] = merge
+
+    def _read_ui(self):
+        tags = []
+        for item in self.tags_tree.get_children():
+            vals = self.tags_tree.item(item, "values")
+            tag = vals[0].strip() if len(vals) > 0 else ""
+            split = vals[1].strip() if len(vals) > 1 else "Yes"
+            if tag:
+                tags.append(f"{tag}; {split}")
+        merge = []
+        for item in self.merge_tree.get_children():
+            vals = self.merge_tree.item(item, "values")
+            action = vals[0].strip() if len(vals) > 0 else "New Line"
+            source = vals[1].strip() if len(vals) > 1 else ""
+            target = vals[2].strip() if len(vals) > 2 else ""
+            if source:
+                merge.append(f"{action}; {source}; {target}")
+        return tags, merge
+
+    def _load_config(self, config_name):
+        tags = self.pending_tags.get(config_name,
+               self.settings_manager.get_config(config_name))
+        merge = self.pending_merge.get(config_name,
+                self.settings_manager.get_merge_columns(config_name))
+
+        for item in self.tags_tree.get_children():
+            self.tags_tree.delete(item)
+        for entry in tags:
+            parts = [p.strip() for p in entry.split(';')]
+            tag = parts[0] if len(parts) > 0 else ""
+            split = parts[1] if len(parts) > 1 else "Yes"
+            if split not in ("Yes", "No"):
+                split = "Yes"
+            self.tags_tree.insert("", tk.END, values=(tag, split))
+
+        for item in self.merge_tree.get_children():
+            self.merge_tree.delete(item)
+        for rule in merge:
+            parts = [p.strip() for p in rule.split(';')]
+            action = parts[0] if len(parts) > 0 else "New Line"
+            source = parts[1] if len(parts) > 1 else ""
+            target = parts[2] if len(parts) > 2 else ""
+            if action not in ("New Line", "Merge", "Hide"):
+                # Old format was Target; Source; Conflict — migrate on load
+                if target in ("New Line", "Merge", "Hide"):
+                    action, target = target, action
+                else:
                     action = "New Line"
-                self.merge_tree.insert("", tk.END, values=(action, source, target))
+            self.merge_tree.insert("", tk.END, values=(action, source, target))
 
     def close_and_save(self):
-        self.save_current_config()
-        self.destroy()
-
-    def save_current_config(self, event=None):
         if self.current_config:
-            values = []
-            for item in self.tags_tree.get_children():
-                vals = self.tags_tree.item(item, "values")
-                tag = vals[0].strip() if len(vals) > 0 else ""
-                split = vals[1].strip() if len(vals) > 1 else "Yes"
-                if tag:
-                    values.append(f"{tag}; {split}")
-            self.settings_manager.update_config(self.current_config, values)
-            merge = []
-            for item in self.merge_tree.get_children():
-                vals = self.merge_tree.item(item, "values")
-                action = vals[0].strip() if len(vals) > 0 else "New Line"
-                source = vals[1].strip() if len(vals) > 1 else ""
-                target = vals[2].strip() if len(vals) > 2 else ""
-                if source:
-                    merge.append(f"{action}; {source}; {target}")
-            self.settings_manager.update_merge_columns(self.current_config, merge)
+            self._buffer_current_edits()
+        for config_name, tags in self.pending_tags.items():
+            self.settings_manager.update_config(config_name, tags)
+        for config_name, merge in self.pending_merge.items():
+            self.settings_manager.update_merge_columns(config_name, merge)
+        self.destroy()
 
     def on_merge_cell_edit(self, event):
         region = self.merge_tree.identify("region", event.x, event.y)
@@ -493,6 +518,8 @@ class ConfigsDialog(tk.Toplevel):
                 self.tags_tree.delete(item)
             for item in self.merge_tree.get_children():
                 self.merge_tree.delete(item)
+            self.pending_tags.pop(name, None)
+            self.pending_merge.pop(name, None)
             self.current_config = None
             self.settings_manager.delete_config(name)
             self.refresh_config_list()
@@ -783,7 +810,11 @@ class XMLParserApp(tk.Tk):
             source = parts[1].strip()
             target = parts[2].strip() if len(parts) > 2 else ""
             if action not in ("New Line", "Merge", "Hide"):
-                action = "New Line"
+                # Old format was Target; Source; Conflict — migrate transparently
+                if target in ("New Line", "Merge", "Hide"):
+                    action, target = target, action
+                else:
+                    action = "New Line"
             if not source:
                 continue
             if action == "Hide":
