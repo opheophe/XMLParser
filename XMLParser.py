@@ -4,6 +4,7 @@ from tkinter import ttk, filedialog, messagebox
 import configparser
 import os
 import subprocess
+import webbrowser
 from pathlib import Path
 from collections import Counter
 from datetime import datetime
@@ -654,11 +655,19 @@ class XMLParserApp(tk.Tk):
         dev_menu.add_command(label="Open Folder", command=self.open_program_folder)
 
     def open_program_folder(self):
-        folder = os.path.dirname(os.path.abspath(__file__))
-        if sys.platform == "darwin":
+        # Open the directory where the program is running (where settings.ini is located)
+        folder = os.getcwd()
+        
+        if sys.platform == "darwin":  # macOS
             subprocess.Popen(["open", folder])
+        elif sys.platform == "win32":  # Windows
+            subprocess.Popen(["explorer", folder])
+        elif sys.platform.startswith("linux"):  # Linux
+            subprocess.Popen(["xdg-open", folder])
         else:
-            subprocess.Popen(f'explorer "{folder}"')
+            # Fallback for other platforms
+            import webbrowser
+            webbrowser.open(f"file://{folder}")
     
     def create_widgets(self):
         # Main container with 20/80 split
