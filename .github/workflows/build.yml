@@ -18,7 +18,7 @@ jobs:
     name: Build on ${{ matrix.os }}
     strategy:
       matrix:
-        # macos-14 uses Apple Silicon runners (M1/M2)
+        # macos-14 is native Apple Silicon (M1/M2/M3)
         os: [windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
 
@@ -30,7 +30,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-          cache: 'pip'
+          # We remove the cache here to ensure fresh, correct binaries for this arch
+          cache: '' 
 
       - name: Install Dependencies
         run: |
@@ -44,8 +45,8 @@ jobs:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
           else
-            # Native build for ARM64 (Apple Silicon)
-            # We removed the 'universal2' flag to avoid the pandas crash
+            # We strictly avoid 'universal2' to prevent the pandas "fat binary" crash
+            # Since we are on a macos-14 runner, this produces a native ARM64 app
             pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
             zip -r dist/XMLParser_Mac.zip dist/XMLParser.app
           fi
