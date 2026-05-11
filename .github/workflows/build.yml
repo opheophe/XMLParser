@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     tags:
-      - 'v*' # Triggers a full release when you push a tag like v1.0.2
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,8 @@ jobs:
     name: Build on ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, macos-latest]
+        # macos-14 is Apple Silicon (M1/M2/M3)
+        os: [windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -35,20 +36,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          # Critical for Mac universal builds
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then pip install macholib; fi
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         shell: bash
 
       - name: Build App
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Windows Build
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
           else
-            # Mac Build with Universal2 support (Intel + Apple Silicon)
-            pyinstaller --onefile --windowed --icon=icon.icns --target-arch universal2 XMLParser.py
-            # Zip the bundle to preserve permissions and folder structure
+            # Standard build (runs natively on M1/M2/M3 because of macos-14 runner)
+            pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
             zip -r dist/XMLParser_Mac.zip dist/XMLParser.app
           fi
         shell: bash
