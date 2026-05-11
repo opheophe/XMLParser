@@ -11,7 +11,6 @@ from datetime import datetime
 import xml.etree.ElementTree as ET
 import csv
 import pandas as pd
-s
 class SettingsManager:
     def __init__(self, settings_file="Settings.ini"):
         self.settings_file = settings_file
