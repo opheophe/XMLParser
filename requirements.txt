@@ -1,0 +1,14 @@
+# XML Parser Requirements
+# Only external dependencies needed (tkinter and xml.etree are built-in)
+
+# Data processing and export
+pandas>=1.3.0
+
+# Optional: CAMT-specific parsing (for ISO 20022 formats)
+# Uncomment if you want to use CAMT-specific libraries instead of custom parsing
+# bankstatementparser>=0.0.8  # For CAMT.053/054 parsing
+# pycamt>=1.0.1  # Alternative CAMT parser
+
+# Development and testing (optional)
+# pytest>=6.0.0  # For testing
+# black>=21.0.0  # For code formatting
