@@ -46,7 +46,7 @@ jobs:
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
           else
             # 1. Build the Mac App
-            pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
+            pyinstaller --onedir --windowed --icon=icon.icns --exclude-module matplotlib --exclude-module scipy XMLParser.py
             
             # 2. Determine architecture for the filename
             if [ "${{ matrix.os }}" = "macos-15-intel" ]; then
