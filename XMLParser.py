@@ -54,6 +54,30 @@ class SettingsManager:
                     merge = self.config[section].get("merge", "")
                     self.merge_columns[config_name] = [v for v in merge.split("\n") if v] if merge else []
         else:
+            # Create default CAMT config
+            self.configs["CAMT"] = [
+                "GrpHdr; Yes",
+                "Acct; Yes",
+                "TxsSummry; Yes",
+                "Ntry; No"
+            ]
+            self.merge_columns["CAMT"] = [
+                "New Line; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocAmt/RmtdAmt@Value; AmountCol1; Amount",
+                "New Line; Strd/RfrdDocAmt/RmtdAmt@Value; AmountCol1; Amount",
+                "New Line; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocAmt/RmtdAmt@Ccy; Currency;",
+                "New Line; Strd/RfrdDocAmt/RmtdAmt@Ccy; Currency;",
+                "Merge; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocInf/Nb; DocInfo;",
+                "Merge; Strd/RfrdDocInf/Nb; DocInfo;",
+                "Hide; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocInf/Tp/CdOrPrtry/Cd; Type;",
+                "Hide; Strd/RfrdDocInf/Tp/CdOrPrtry/Cd; Type;",
+                "Merge; NtryDtls/TxDtls/RmtInf/Strd/AddtlRmtInf; DocInfo;",
+                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/AdrLine; Address;",
+                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/Ctry; Address;",
+                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/PstCd; Address;",
+                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/StrtNm; Address;",
+                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/TwnNm; Address;",
+                "Hide; Ntry/BkTxCd/Domn/Cd; ;"
+            ]
             self.save()
     
     def save(self):
