@@ -644,10 +644,17 @@ class XMLParserApp(tk.Tk):
         
         # macOS-specific: Ensure window appears when built with --windowed
         if sys.platform == "darwin":
-            self.lift()
-            self.attributes('-topmost', True)
-            self.after_idle(lambda: self.attributes('-topmost', False))
+            try:
+                self.lift()
+                self.after(100, self.force_focus)
+            except Exception as e:
+                print(f"Window activation error: {e}")
+    
+    def force_focus(self):
+        try:
             self.focus_force()
+        except Exception as e:
+            print(f"Focus error: {e}")
     
     def create_menu(self):
         menubar = tk.Menu(self)
@@ -1205,5 +1212,27 @@ class XMLParserApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = XMLParserApp()
-    app.mainloop()
+    try:
+        app = XMLParserApp()
+        app.mainloop()
+    except Exception as e:
+        import traceback
+        import os
+        from datetime import datetime
+        
+        # Log error to file
+        error_log = os.path.join(os.getcwd(), f"xmlparser_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        with open(error_log, 'w') as f:
+            f.write(f"XMLParser Error Log - {datetime.now()}\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Error: {e}\n\n")
+            f.write("Traceback:\n")
+            traceback.print_exc(file=f)
+        
+        # Show error in message box if possible
+        try:
+            from tkinter import messagebox
+            messagebox.showerror("XMLParser Error", 
+                f"An error occurred and has been logged to:\n{error_log}\n\nError: {str(e)}")
+        except:
+            pass
