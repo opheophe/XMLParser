@@ -641,6 +641,13 @@ class XMLParserApp(tk.Tk):
         # Bind window close to save settings
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind("<Configure>", self.on_resize)
+        
+        # macOS-specific: Ensure window appears when built with --windowed
+        if sys.platform == "darwin":
+            self.lift()
+            self.attributes('-topmost', True)
+            self.after_idle(lambda: self.attributes('-topmost', False))
+            self.focus_force()
     
     def create_menu(self):
         menubar = tk.Menu(self)

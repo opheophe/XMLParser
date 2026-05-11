@@ -46,7 +46,7 @@ jobs:
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
           else
             # 1. Build the Mac App
-            pyinstaller --onefile --icon=icon.icns XMLParser.py
+            pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
             
             # 2. Determine architecture for the filename
             if [ "${{ matrix.os }}" = "macos-15-intel" ]; then
@@ -55,21 +55,17 @@ jobs:
               ARCH="Silicon"
             fi
             
-            # 3. Create a directory structure for DMG
-            mkdir -p dist/XMLParserApp
-            cp dist/XMLParser dist/XMLParserApp/
-            
-            # 4. Create a professional DMG installer
+            # 3. Create a professional DMG installer
             create-dmg \
               --volname "XMLParser ${ARCH} Installer" \
               --window-pos 200 120 \
               --window-size 600 400 \
               --icon-size 100 \
-              --icon "XMLParser" 175 120 \
-              --hide-extension "XMLParser" \
+              --icon "XMLParser.app" 175 120 \
+              --hide-extension "XMLParser.app" \
               --app-drop-link 425 120 \
               "dist/XMLParser_Mac_${ARCH}.dmg" \
-              "dist/XMLParserApp"
+              "dist/XMLParser.app"
           fi
         shell: bash
 
