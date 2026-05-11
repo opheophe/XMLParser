@@ -56,8 +56,8 @@ jobs:
             fi
             
             # 3. Create a directory structure for DMG
-            mkdir -p dist/XMLParser
-            cp dist/XMLParser dist/XMLParser/
+            mkdir -p dist/XMLParserApp
+            cp dist/XMLParser dist/XMLParserApp/
             
             # 4. Create a professional DMG installer
             create-dmg \
@@ -69,7 +69,7 @@ jobs:
               --hide-extension "XMLParser" \
               --app-drop-link 425 120 \
               "dist/XMLParser_Mac_${ARCH}.dmg" \
-              "dist/XMLParser"
+              "dist/XMLParserApp"
           fi
         shell: bash
 
