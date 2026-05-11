@@ -61,11 +61,11 @@ jobs:
               --window-pos 200 120 \
               --window-size 600 400 \
               --icon-size 100 \
-              --icon "XMLParser.app" 175 120 \
-              --hide-extension "XMLParser.app" \
+              --icon "XMLParser" 175 120 \
+              --hide-extension "XMLParser" \
               --app-drop-link 425 120 \
               "dist/XMLParser_Mac_${ARCH}.dmg" \
-              "dist/XMLParser.app"
+              "dist/XMLParser"
           fi
         shell: bash
 
