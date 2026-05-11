@@ -55,7 +55,11 @@ jobs:
               ARCH="Silicon"
             fi
             
-            # 3. Create a professional DMG installer
+            # 3. Create a directory structure for DMG
+            mkdir -p dist/XMLParser
+            cp dist/XMLParser dist/XMLParser/
+            
+            # 4. Create a professional DMG installer
             create-dmg \
               --volname "XMLParser ${ARCH} Installer" \
               --window-pos 200 120 \
