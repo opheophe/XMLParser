@@ -18,8 +18,8 @@ jobs:
     name: Build on ${{ matrix.os }}
     strategy:
       matrix:
-        # macos-14 is native Apple Silicon (M1/M2/M3)
-        os: [windows-latest, macos-14]
+        # We add macos-13 (Intel) AND macos-latest (Apple Silicon)
+        os: [windows-latest, macos-13, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -30,8 +30,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-          # We remove the cache here to ensure fresh, correct binaries for this arch
-          cache: '' 
 
       - name: Install Dependencies
         run: |
@@ -44,11 +42,14 @@ jobs:
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
-          else
-            # We strictly avoid 'universal2' to prevent the pandas "fat binary" crash
-            # Since we are on a macos-14 runner, this produces a native ARM64 app
+          elif [ "${{ matrix.os }}" = "macos-13" ]; then
+            # Intel Mac Build
             pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
-            zip -r dist/XMLParser_Mac.zip dist/XMLParser.app
+            zip -r dist/XMLParser_Intel_Mac.zip dist/XMLParser.app
+          else
+            # Apple Silicon Mac Build
+            pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
+            zip -r dist/XMLParser_Silicon_Mac.zip dist/XMLParser.app
           fi
         shell: bash
 
@@ -75,7 +76,8 @@ jobs:
         with:
           files: |
             all-bins/XMLParser.exe
-            all-bins/XMLParser_Mac.zip
+            all-bins/XMLParser_Intel_Mac.zip
+            all-bins/XMLParser_Silicon_Mac.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
