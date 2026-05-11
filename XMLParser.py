@@ -13,7 +13,21 @@ import csv
 import pandas as pd
 class SettingsManager:
     def __init__(self, settings_file="Settings.ini"):
-        self.settings_file = settings_file
+        # Use user's home directory for settings to avoid read-only app bundle issues
+        import tempfile
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller bundle
+            if sys.platform == "win32":
+                # Windows: use AppData\Roaming
+                app_data_dir = os.path.join(os.environ['APPDATA'], 'XMLParser')
+            else:
+                # macOS/Linux: use hidden folder in home
+                app_data_dir = os.path.join(os.path.expanduser('~'), '.XMLParser')
+            os.makedirs(app_data_dir, exist_ok=True)
+            self.settings_file = os.path.join(app_data_dir, settings_file)
+        else:
+            # Running as script
+            self.settings_file = settings_file
         self.config = configparser.ConfigParser()
         self.configs = {}
         self.merge_columns = {}
@@ -667,8 +681,16 @@ class XMLParserApp(tk.Tk):
         dev_menu.add_command(label="Open Folder", command=self.open_program_folder)
 
     def open_program_folder(self):
-        # Open the directory where the program is running (where settings.ini is located)
-        folder = os.getcwd()
+        # Open the directory where settings are stored
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller bundle
+            if sys.platform == "win32":
+                folder = os.path.join(os.environ['APPDATA'], 'XMLParser')
+            else:
+                folder = os.path.join(os.path.expanduser('~'), '.XMLParser')
+        else:
+            # Running as script - open current directory
+            folder = os.getcwd()
         
         if sys.platform == "darwin":  # macOS
             subprocess.Popen(["open", folder])
