@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  # This tells GitHub to use the new Node 24 engine now and silences the warnings
+  # This silences the Node.js deprecation warnings
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -19,10 +19,10 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6 # Updated
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v6 # Updated
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -37,14 +37,16 @@ jobs:
       - name: Build with PyInstaller
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            pyinstaller --onefile --windowed --icon=icons.ico XMLParser.py
+            # Matches your file: icon.ico
+            pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
           else
-            pyinstaller --onefile --windowed --icon=icons.icns XMLParser.py
+            # Matches your file: icon.icns
+            pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
           fi
         shell: bash
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v6 # Updated
+        uses: actions/upload-artifact@v6
         with:
           name: XMLParser-for-${{ matrix.os }}
           path: dist/
