@@ -18,8 +18,8 @@ jobs:
     name: Build on ${{ matrix.os }}
     strategy:
       matrix:
-        # We add macos-13 (Intel) AND macos-latest (Apple Silicon)
-        os: [windows-latest, macos-13, macos-latest]
+        # WE UPDATED THESE LABELS:
+        os: [windows-latest, macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -42,12 +42,12 @@ jobs:
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
-          elif [ "${{ matrix.os }}" = "macos-13" ]; then
-            # Intel Mac Build
+          elif [ "${{ matrix.os }}" = "macos-15-intel" ]; then
+            # The Intel-specific build
             pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
             zip -r dist/XMLParser_Intel_Mac.zip dist/XMLParser.app
           else
-            # Apple Silicon Mac Build
+            # The Apple Silicon build (macos-26)
             pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
             zip -r dist/XMLParser_Silicon_Mac.zip dist/XMLParser.app
           fi
