@@ -1,4 +1,4 @@
-name: Build and Release XMLParser
+name: Build and Release XMLParser (Signed)
 
 on:
   push:
@@ -18,7 +18,6 @@ jobs:
     name: Build on ${{ matrix.os }}
     strategy:
       matrix:
-        # Using macos-15-intel (Intel) and macos-26 (Apple Silicon) for 2026 compatibility
         os: [windows-latest, macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
 
@@ -55,7 +54,21 @@ jobs:
               ARCH="Silicon"
             fi
             
-            # 3. Create a professional DMG installer
+            # 3. Code sign the app (if certificate available)
+            if [ -n "${{ secrets.MACOS_SIGNING_CERTIFICATE }}" ]; then
+              # Import signing certificate
+              echo "${{ secrets.MACOS_SIGNING_CERTIFICATE }}" | base64 --decode > certificate.p12
+              security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+              security default-keychain -s build.keychain
+              security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+              security import certificate.p12 -k build.keychain -P "${{ secrets.CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+              security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+              
+              # Sign the app
+              codesign --force --verify --verbose --sign "${{ secrets.MACOS_SIGNING_IDENTITY }}" "dist/XMLParser.app"
+            fi
+            
+            # 4. Create a professional DMG installer
             create-dmg \
               --volname "XMLParser ${ARCH} Installer" \
               --window-pos 200 120 \
@@ -102,7 +115,11 @@ jobs:
             Download `XMLParser.exe` and run it directly.
             
             ### macOS
-            **Important**: Due to macOS security, right-click the app and select "Open" the first time.
-            This is normal for apps not from the App Store.
+            **Important**: Due to macOS security requirements, you may need to:
+            1. Right-click the app and select "Open"
+            2. Click "Open" in the security dialog
+            3. Or go to System Settings → Privacy & Security → Allow Anyway
+            
+            This is normal for apps not distributed through the App Store.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
