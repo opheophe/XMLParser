@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     tags:
-      - 'v*'
+      - 'v*' # Triggers a full release on tags like v1.0.3
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
     name: Build on ${{ matrix.os }}
     strategy:
       matrix:
-        # macos-14 is Apple Silicon (M1/M2/M3)
+        # macos-14 uses Apple Silicon (M1/M2) runners
         os: [windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
 
@@ -42,9 +42,10 @@ jobs:
       - name: Build App
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Windows Build
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
           else
-            # Standard build (runs natively on M1/M2/M3 because of macos-14 runner)
+            # Mac Build - Native ARM build (No universal2 flag to avoid pandas error)
             pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
             zip -r dist/XMLParser_Mac.zip dist/XMLParser.app
           fi
