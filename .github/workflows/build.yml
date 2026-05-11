@@ -18,7 +18,7 @@ jobs:
     name: Build on ${{ matrix.os }}
     strategy:
       matrix:
-        # WE UPDATED THESE LABELS:
+        # Using macos-15-intel (Intel) and macos-26 (Apple Silicon) for 2026 compatibility
         os: [windows-latest, macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
 
@@ -36,20 +36,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Install DMG creator tool on Mac runners
+          if [[ "${{ matrix.os }}" == macos* ]]; then brew install create-dmg; fi
         shell: bash
 
       - name: Build App
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
-          elif [ "${{ matrix.os }}" = "macos-15-intel" ]; then
-            # The Intel-specific build
-            pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
-            zip -r dist/XMLParser_Intel_Mac.zip dist/XMLParser.app
           else
-            # The Apple Silicon build (macos-26)
+            # 1. Build the Mac App
             pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
-            zip -r dist/XMLParser_Silicon_Mac.zip dist/XMLParser.app
+            
+            # 2. Determine architecture for the filename
+            if [ "${{ matrix.os }}" = "macos-15-intel" ]; then
+              ARCH="Intel"
+            else
+              ARCH="Silicon"
+            fi
+            
+            # 3. Create a professional DMG installer
+            create-dmg \
+              --volname "XMLParser ${ARCH} Installer" \
+              --window-pos 200 120 \
+              --window-size 600 400 \
+              --icon-size 100 \
+              --icon "XMLParser.app" 175 120 \
+              --hide-extension "XMLParser.app" \
+              --app-drop-link 425 120 \
+              "dist/XMLParser_Mac_${ARCH}.dmg" \
+              "dist/XMLParser.app"
           fi
         shell: bash
 
@@ -76,8 +92,8 @@ jobs:
         with:
           files: |
             all-bins/XMLParser.exe
-            all-bins/XMLParser_Intel_Mac.zip
-            all-bins/XMLParser_Silicon_Mac.zip
+            all-bins/XMLParser_Mac_Intel.dmg
+            all-bins/XMLParser_Mac_Silicon.dmg
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
