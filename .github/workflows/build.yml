@@ -1,0 +1,36 @@
+name: Build XMLParser App
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install pyinstaller
+          # If you have a requirements.txt, this installs it. 
+          # If not, it will gracefully skip it.
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        shell: bash
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed XMLParser.py
+
+      - name: Upload Finished App
+        uses: actions/upload-artifact@v4
+        with:
+          name: XMLParser-${{ matrix.os }}
+          path: dist/
