@@ -12,13 +12,81 @@ import xml.etree.ElementTree as ET
 import csv
 import pandas as pd
 
+class _MacButton(tk.Label):
+    """Label-based button that renders bg/fg colours correctly on macOS."""
+
+    def __init__(self, parent, text="", command=None, bg="#7F8C8D", fg="white",
+                 activebackground=None, activeforeground="white",
+                 state="normal", disabledforeground=None, **kwargs):
+        self._bg = bg
+        self._fg = fg
+        self._active_bg = activebackground or bg
+        self._active_fg = activeforeground
+        self._cmd = command
+        self._disabled_fg = disabledforeground or "gray"
+        self._state = state
+        super().__init__(parent, text=text, bg=bg, fg=fg,
+                         padx=6, pady=3, relief="raised", cursor="hand2", **kwargs)
+        self._bind()
+        if state == "disabled":
+            self._set_disabled()
+
+    def _bind(self):
+        self.bind("<Button-1>", self._press)
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+
+    def _unbind(self):
+        for seq in ("<Button-1>", "<ButtonRelease-1>", "<Enter>", "<Leave>"):
+            self.bind(seq, lambda e: None)
+
+    def _press(self, _):
+        tk.Label.config(self, relief="sunken", bg=self._active_bg, fg=self._active_fg)
+
+    def _release(self, _):
+        tk.Label.config(self, relief="raised", bg=self._bg, fg=self._fg)
+        if self._cmd:
+            self._cmd()
+
+    def _enter(self, _):
+        tk.Label.config(self, bg=self._active_bg, fg=self._active_fg)
+
+    def _leave(self, _):
+        tk.Label.config(self, bg=self._bg, fg=self._fg)
+
+    def _set_disabled(self):
+        self._unbind()
+        tk.Label.config(self, fg=self._disabled_fg, cursor="")
+
+    def _set_normal(self):
+        self._bind()
+        tk.Label.config(self, fg=self._fg, cursor="hand2")
+
+    def config(self, **kwargs):
+        state = kwargs.pop("state", None)
+        if state == "disabled":
+            self._state = "disabled"
+            self._set_disabled()
+        elif state == "normal":
+            self._state = "normal"
+            self._set_normal()
+        if "command" in kwargs:
+            self._cmd = kwargs.pop("command")
+        if kwargs:
+            tk.Label.config(self, **kwargs)
+
+    configure = config
+
+
 def make_btn(parent, text, command=None, bg="#7F8C8D", fg="white",
              activebackground=None, activeforeground="white", **kwargs):
     if activebackground is None:
         activebackground = bg
     if sys.platform == "darwin":
-        return tk.Button(parent, text=text, command=command,
-                         highlightbackground=bg, **kwargs)
+        return _MacButton(parent, text=text, command=command,
+                          bg=bg, fg=fg, activebackground=activebackground,
+                          activeforeground=activeforeground, **kwargs)
     return tk.Button(parent, text=text, command=command,
                      bg=bg, fg=fg, activebackground=activebackground,
                      activeforeground=activeforeground, **kwargs)
