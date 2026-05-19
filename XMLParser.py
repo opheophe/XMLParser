@@ -63,7 +63,13 @@ class _MacButton(tk.Label):
         self._bind()
         tk.Label.config(self, fg=self._fg)
 
-    def config(self, **kwargs):
+    def config(self, cnf=None, **kwargs):
+        if cnf is not None:
+            if isinstance(cnf, str):
+                return tk.Label.config(self, cnf)
+            kwargs.update(cnf)
+        if not kwargs:
+            return tk.Label.config(self)
         state = kwargs.pop("state", None)
         if state == "disabled":
             self._state = "disabled"
