@@ -12,87 +12,12 @@ import xml.etree.ElementTree as ET
 import csv
 import pandas as pd
 
-class _MacButton(tk.Label):
-    """Label-based button that renders bg/fg colours correctly on macOS."""
-
-    def __init__(self, parent, text="", command=None, bg="#7F8C8D", fg="white",
-                 activebackground=None, activeforeground="white",
-                 state="normal", disabledforeground=None, **kwargs):
-        self._bg = bg
-        self._fg = fg
-        self._active_bg = activebackground or bg
-        self._active_fg = activeforeground
-        self._cmd = command
-        self._disabled_fg = disabledforeground or "gray"
-        self._state = state
-        super().__init__(parent, text=text, bg=bg, fg=fg,
-                         padx=6, pady=3, relief="raised", **kwargs)
-        self._bind()
-        if state == "disabled":
-            self._set_disabled()
-
-    def _bind(self):
-        self.bind("<Button-1>", self._press)
-        self.bind("<ButtonRelease-1>", self._release)
-        self.bind("<Enter>", self._enter)
-        self.bind("<Leave>", self._leave)
-
-    def _unbind(self):
-        for seq in ("<Button-1>", "<ButtonRelease-1>", "<Enter>", "<Leave>"):
-            self.bind(seq, lambda e: None)
-
-    def _press(self, _):
-        tk.Label.config(self, relief="sunken", bg=self._active_bg, fg=self._active_fg)
-
-    def _release(self, _):
-        tk.Label.config(self, relief="raised", bg=self._bg, fg=self._fg)
-        if self._cmd:
-            self._cmd()
-
-    def _enter(self, _):
-        tk.Label.config(self, bg=self._active_bg, fg=self._active_fg)
-
-    def _leave(self, _):
-        tk.Label.config(self, bg=self._bg, fg=self._fg)
-
-    def _set_disabled(self):
-        self._unbind()
-        tk.Label.config(self, fg=self._disabled_fg)
-
-    def _set_normal(self):
-        self._bind()
-        tk.Label.config(self, fg=self._fg)
-
-    def config(self, cnf=None, **kwargs):
-        if cnf is not None:
-            if isinstance(cnf, str):
-                return tk.Label.config(self, cnf)
-            kwargs.update(cnf)
-        if not kwargs:
-            return tk.Label.config(self)
-        state = kwargs.pop("state", None)
-        if state == "disabled":
-            self._state = "disabled"
-            self._set_disabled()
-        elif state == "normal":
-            self._state = "normal"
-            self._set_normal()
-        if "command" in kwargs:
-            self._cmd = kwargs.pop("command")
-        if kwargs:
-            tk.Label.config(self, **kwargs)
-
-    configure = config
-
-
 def make_btn(parent, text, command=None, bg="#7F8C8D", fg="white",
              activebackground=None, activeforeground="white", **kwargs):
     if activebackground is None:
         activebackground = bg
     if sys.platform == "darwin":
-        return _MacButton(parent, text=text, command=command,
-                          bg=bg, fg=fg, activebackground=activebackground,
-                          activeforeground=activeforeground, **kwargs)
+        return tk.Button(parent, text=text, command=command, **kwargs)
     return tk.Button(parent, text=text, command=command,
                      bg=bg, fg=fg, activebackground=activebackground,
                      activeforeground=activeforeground, **kwargs)
@@ -847,16 +772,16 @@ class XMLParserApp(tk.Tk):
     
     def open_file(self):
         initial_dir = self.settings_manager.last_directory if self.settings_manager.last_directory else "."
-        file_path = filedialog.askopenfilename(
-            title="Select XML file",
+        file_paths = filedialog.askopenfilenames(
+            title="Select XML file(s)",
             filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
             initialdir=initial_dir
         )
-        
-        if file_path:
-            self.settings_manager.last_directory = os.path.dirname(file_path)
+
+        if file_paths:
+            self.settings_manager.last_directory = os.path.dirname(file_paths[0])
             self.settings_manager.save()
-            self.parse_and_display_xml(file_path)
+            self.parse_and_display_xml(file_paths)
     
     def update_config_dropdown(self):
         config_names = self.settings_manager.get_config_names()
@@ -1143,33 +1068,53 @@ class XMLParserApp(tk.Tk):
 
         return leaves
 
-    def parse_and_display_xml(self, file_path):
+    def parse_and_display_xml(self, file_paths):
+        if isinstance(file_paths, str):
+            file_paths = (file_paths,)
         try:
-            tree = ET.parse(file_path)
-            root = tree.getroot()
-            root = self.strip_namespaces(root)
-
             selected_config = self.config_var.get()
             has_config = selected_config and selected_config != "No configs"
             config_tags = self.settings_manager.get_config(selected_config) if has_config else []
             merge_rules = self.settings_manager.get_merge_columns(selected_config) if has_config else []
 
-            if config_tags:
-                tabs = self.parse_with_config(root, config_tags, merge_rules)
-            else:
-                columns, rows = self.element_to_rows(root)
-                columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules)
-                rows = self.deduplicate_amount_values(columns, rows)
-                if not rows:
-                    messagebox.showwarning("Warning", "No data found in XML.")
-                    return
-                tabs = [("Sheet1", columns, rows, col_formats)]
+            merged = {}        # tab_name -> (columns, rows, col_formats)
+            split_counters = {}  # base_name -> running count across files
 
-            if not tabs:
-                messagebox.showwarning("Warning", "No data found for the selected config tags.")
+            for file_path in file_paths:
+                tree = ET.parse(file_path)
+                root = tree.getroot()
+                root = self.strip_namespaces(root)
+
+                if config_tags:
+                    tabs = self.parse_with_config(root, config_tags, merge_rules)
+                else:
+                    columns, rows = self.element_to_rows(root)
+                    columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules)
+                    rows = self.deduplicate_amount_values(columns, rows)
+                    tabs = [("Sheet1", columns, rows, col_formats)] if rows else []
+
+                for tab_name, columns, rows, col_formats in tabs:
+                    parts = tab_name.rsplit(" ", 1)
+                    if len(parts) == 2 and parts[1].isdigit():
+                        # Numbered (split) tab — renumber sequentially across files
+                        base = parts[0]
+                        split_counters[base] = split_counters.get(base, 0) + 1
+                        merged[f"{base} {split_counters[base]}"] = (columns, rows, col_formats)
+                    else:
+                        # Non-split tab — merge rows under the same tab name
+                        if tab_name in merged:
+                            merged[tab_name] = (merged[tab_name][0],
+                                                merged[tab_name][1] + rows,
+                                                merged[tab_name][2])
+                        else:
+                            merged[tab_name] = (columns, rows, col_formats)
+
+            if not merged:
+                messagebox.showwarning("Warning", "No data found in selected file(s).")
                 return
 
-            self.display_tabs(tabs)
+            self.display_tabs([(name, cols, rows, fmts)
+                               for name, (cols, rows, fmts) in merged.items()])
             self.export_button.config(state="normal")
             self.export_excel_button.config(state="normal")
 
