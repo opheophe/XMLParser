@@ -26,7 +26,7 @@ class _MacButton(tk.Label):
         self._disabled_fg = disabledforeground or "gray"
         self._state = state
         super().__init__(parent, text=text, bg=bg, fg=fg,
-                         padx=6, pady=3, relief="raised", cursor="hand2", **kwargs)
+                         padx=6, pady=3, relief="raised", **kwargs)
         self._bind()
         if state == "disabled":
             self._set_disabled()
@@ -61,7 +61,7 @@ class _MacButton(tk.Label):
 
     def _set_normal(self):
         self._bind()
-        tk.Label.config(self, fg=self._fg, cursor="hand2")
+        tk.Label.config(self, fg=self._fg, cursor="pointinghand")
 
     def config(self, **kwargs):
         state = kwargs.pop("state", None)
@@ -883,7 +883,9 @@ class XMLParserApp(tk.Tk):
         child_tag_counts = Counter(child.tag for child in elem)
         for tag, count in child_tag_counts.items():
             if count > 1:
-                return tag, elem
+                # Leaf-only repetitions are split field values, not record structures — skip them
+                if any(len(c) > 0 for c in elem if c.tag == tag):
+                    return tag, elem
         for child in elem:
             if child_tag_counts[child.tag] == 1:
                 result_tag, result_parent = self.find_record_info(child)
@@ -953,7 +955,10 @@ class XMLParserApp(tk.Tk):
                     if leaf['attributes']:
                         attr_parts = [f"{k}={v}" for k, v in leaf['attributes'].items()]
                         value = f"{value} ({' '.join(attr_parts)})" if value else ' '.join(attr_parts)
-                    row[path] = value
+                    if path in row and row[path] and value:
+                        row[path] = row[path] + " " + value
+                    else:
+                        row[path] = value
             rows.append(row)
 
         return columns, rows
