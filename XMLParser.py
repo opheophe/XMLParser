@@ -57,11 +57,11 @@ class _MacButton(tk.Label):
 
     def _set_disabled(self):
         self._unbind()
-        tk.Label.config(self, fg=self._disabled_fg, cursor="")
+        tk.Label.config(self, fg=self._disabled_fg)
 
     def _set_normal(self):
         self._bind()
-        tk.Label.config(self, fg=self._fg, cursor="pointinghand")
+        tk.Label.config(self, fg=self._fg)
 
     def config(self, **kwargs):
         state = kwargs.pop("state", None)
