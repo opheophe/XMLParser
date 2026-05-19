@@ -11,6 +11,18 @@ from datetime import datetime
 import xml.etree.ElementTree as ET
 import csv
 import pandas as pd
+
+def make_btn(parent, text, command=None, bg="#7F8C8D", fg="white",
+             activebackground=None, activeforeground="white", **kwargs):
+    if activebackground is None:
+        activebackground = bg
+    if sys.platform == "darwin":
+        return tk.Button(parent, text=text, command=command,
+                         highlightbackground=bg, **kwargs)
+    return tk.Button(parent, text=text, command=command,
+                     bg=bg, fg=fg, activebackground=activebackground,
+                     activeforeground=activeforeground, **kwargs)
+
 class SettingsManager:
     def __init__(self, settings_file="Settings.ini"):
         # Use user's home directory for settings to avoid read-only app bundle issues
@@ -212,16 +224,16 @@ class ConfigsDialog(tk.Toplevel):
         buttons_frame = tk.Frame(self)
         buttons_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        self.add_button = tk.Button(buttons_frame, text="Add config", command=self.add_config,
-                                    bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white")
+        self.add_button = make_btn(buttons_frame, text="Add config", command=self.add_config,
+                                   bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white")
         self.add_button.pack(side=tk.LEFT, padx=5)
 
-        self.delete_button = tk.Button(buttons_frame, text="Delete config", command=self.delete_config,
-                                       bg="#E74C3C", fg="white", activebackground="#C0392B", activeforeground="white")
+        self.delete_button = make_btn(buttons_frame, text="Delete config", command=self.delete_config,
+                                      bg="#E74C3C", fg="white", activebackground="#C0392B", activeforeground="white")
         self.delete_button.pack(side=tk.LEFT, padx=5)
 
-        self.info_button = tk.Button(buttons_frame, text="Info", command=self.show_info,
-                                     bg="#3498DB", fg="white", activebackground="#2980B9", activeforeground="white")
+        self.info_button = make_btn(buttons_frame, text="Info", command=self.show_info,
+                                    bg="#3498DB", fg="white", activebackground="#2980B9", activeforeground="white")
         self.info_button.pack(side=tk.LEFT, padx=5)
         
         # Tags table
@@ -253,10 +265,10 @@ class ConfigsDialog(tk.Toplevel):
 
         tags_btn_frame = tk.Frame(tags_outer)
         tags_btn_frame.pack(fill=tk.X, pady=(3, 0))
-        tk.Button(tags_btn_frame, text="Add Row", command=self.add_tags_row,
-                  bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=(0, 5))
-        tk.Button(tags_btn_frame, text="Delete Row", command=self.delete_tags_row,
-                  bg="#E74C3C", fg="white", activebackground="#C0392B", activeforeground="white").pack(side=tk.LEFT)
+        make_btn(tags_btn_frame, text="Add Row", command=self.add_tags_row,
+                 bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=(0, 5))
+        make_btn(tags_btn_frame, text="Delete Row", command=self.delete_tags_row,
+                 bg="#E74C3C", fg="white", activebackground="#C0392B", activeforeground="white").pack(side=tk.LEFT)
 
 
         # Merge columns table
@@ -292,20 +304,20 @@ class ConfigsDialog(tk.Toplevel):
 
         merge_btn_frame = tk.Frame(merge_outer)
         merge_btn_frame.pack(fill=tk.X, pady=(3, 0))
-        tk.Button(merge_btn_frame, text="Add Row", command=self.add_merge_row,
-                  bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=(0, 5))
-        tk.Button(merge_btn_frame, text="Delete Row", command=self.delete_merge_row,
-                  bg="#E74C3C", fg="white", activebackground="#C0392B", activeforeground="white").pack(side=tk.LEFT)
+        make_btn(merge_btn_frame, text="Add Row", command=self.add_merge_row,
+                 bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=(0, 5))
+        make_btn(merge_btn_frame, text="Delete Row", command=self.delete_merge_row,
+                 bg="#E74C3C", fg="white", activebackground="#C0392B", activeforeground="white").pack(side=tk.LEFT)
 
         # Close buttons
         close_btn_frame = tk.Frame(self)
         close_btn_frame.pack(pady=10)
-        tk.Button(close_btn_frame, text="Close and save",
-                  command=self.close_and_save,
-                  bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=5)
-        tk.Button(close_btn_frame, text="Close",
-                  command=self.destroy,
-                  bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(close_btn_frame, text="Close and save",
+                 command=self.close_and_save,
+                 bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(close_btn_frame, text="Close",
+                 command=self.destroy,
+                 bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
 
         self.current_config = None
     
@@ -539,10 +551,10 @@ class ConfigsDialog(tk.Toplevel):
         
         button_frame = tk.Frame(dialog)
         button_frame.pack(pady=10)
-        tk.Button(button_frame, text="OK", command=confirm,
-                  bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Cancel", command=cancel,
-                  bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(button_frame, text="OK", command=confirm,
+                 bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(button_frame, text="Cancel", command=cancel,
+                 bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
         
         dialog.bind("<Return>", lambda e: confirm())
         dialog.bind("<Escape>", lambda e: cancel())
@@ -624,8 +636,8 @@ class ConfigsDialog(tk.Toplevel):
         )
 
         tk.Label(info, text=text, justify=tk.LEFT, font=("Courier", 9), padx=15, pady=10).pack()
-        tk.Button(info, text="Close", command=info.destroy,
-                  bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(pady=(0, 10))
+        make_btn(info, text="Close", command=info.destroy,
+                 bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(pady=(0, 10))
 
         info.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() - info.winfo_width()) // 2
@@ -715,8 +727,8 @@ class XMLParserApp(tk.Tk):
         button_frame = tk.Frame(self.upper_frame)
         button_frame.pack(pady=5, padx=10, anchor=tk.W)
         
-        self.open_button = tk.Button(button_frame, text="Open", command=self.open_file,
-                                     bg="#4A90D9", fg="white", activebackground="#357ABD", activeforeground="white")
+        self.open_button = make_btn(button_frame, text="Open", command=self.open_file,
+                                    bg="#4A90D9", fg="white", activebackground="#357ABD", activeforeground="white")
         self.open_button.pack(side=tk.LEFT, padx=10)
 
         # Config dropdown
@@ -726,15 +738,15 @@ class XMLParserApp(tk.Tk):
         self.config_dropdown.bind("<<ComboboxSelected>>", self.on_config_selected)
 
         # Export CSV button
-        self.export_button = tk.Button(button_frame, text="Export CSV", command=self.export_csv, state="disabled",
-                                       bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white",
-                                       disabledforeground="black")
+        self.export_button = make_btn(button_frame, text="Export CSV", command=self.export_csv, state="disabled",
+                                      bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white",
+                                      disabledforeground="black")
         self.export_button.pack(side=tk.LEFT, padx=10)
 
         # Export Excel button
-        self.export_excel_button = tk.Button(button_frame, text="Export Excel", command=self.export_excel, state="disabled",
-                                             bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white",
-                                             disabledforeground="black")
+        self.export_excel_button = make_btn(button_frame, text="Export Excel", command=self.export_excel, state="disabled",
+                                            bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white",
+                                            disabledforeground="black")
         self.export_excel_button.pack(side=tk.LEFT, padx=10)
         
         # Notebook
@@ -1160,15 +1172,15 @@ class XMLParserApp(tk.Tk):
                 os.startfile(file_path)
             dialog.destroy()
 
-        tk.Button(btn_frame, text="Open location",
-                  command=open_location,
-                  bg="#4A90D9", fg="white", activebackground="#357ABD", activeforeground="white").pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Open file",
-                  command=open_file,
-                  bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="OK",
-                  command=dialog.destroy,
-                  bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(btn_frame, text="Open location",
+                 command=open_location,
+                 bg="#4A90D9", fg="white", activebackground="#357ABD", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(btn_frame, text="Open file",
+                 command=open_file,
+                 bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(btn_frame, text="OK",
+                 command=dialog.destroy,
+                 bg="#7F8C8D", fg="white", activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
 
         dialog.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
