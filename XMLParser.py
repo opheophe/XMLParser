@@ -1246,7 +1246,19 @@ class XMLParserApp(tk.Tk):
             return
 
         try:
+            swedish = self.settings_manager.decimal_separator == "swedish"
             df = pd.DataFrame(rows, columns=columns)
+            if swedish:
+                def _to_swedish(v):
+                    s = str(v).strip().replace(",", ".")
+                    try:
+                        return f"{float(s):.2f}".replace(".", ",")
+                    except (ValueError, TypeError):
+                        return str(v)
+                for col in df.columns:
+                    fmt = col_formats.get(col, "")
+                    if fmt == "Amount" or (not fmt and col.endswith('@Value')):
+                        df[col] = df[col].fillna("").apply(_to_swedish)
             df.to_csv(file_path, index=False, encoding='utf-8')
             self.show_export_dialog(file_path)
         except Exception as e:
