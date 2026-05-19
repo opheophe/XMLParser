@@ -113,6 +113,7 @@ class SettingsManager:
         self.merge_columns = {}
         self.last_directory = ""
         self.last_selected_config = ""
+        self.decimal_separator = "english"
         self.window_x = 100
         self.window_y = 100
         self.window_width = 1000
@@ -135,6 +136,7 @@ class SettingsManager:
             if "General" in self.config:
                 self.last_directory = self.config["General"].get("last_directory", "")
                 self.last_selected_config = self.config["General"].get("last_selected_config", "")
+                self.decimal_separator = self.config["General"].get("decimal_separator", "english")
             
             # Configs
             self.configs = {}
@@ -187,7 +189,8 @@ class SettingsManager:
         # General settings
         self.config["General"] = {
             "last_directory": self.last_directory,
-            "last_selected_config": self.last_selected_config
+            "last_selected_config": self.last_selected_config,
+            "decimal_separator": self.decimal_separator
         }
         
         # Configs
@@ -722,10 +725,11 @@ class XMLParserApp(tk.Tk):
         
         self.settings_manager = SettingsManager()
         self.settings_manager.validate_window_position()
-        
+
         self.title("XML Parser")
         self.geometry(f"{self.settings_manager.window_width}x{self.settings_manager.window_height}+{self.settings_manager.window_x}+{self.settings_manager.window_y}")
-        
+
+        self.decimal_var = tk.StringVar(value=self.settings_manager.decimal_separator)
         self.create_menu()
         self.create_widgets()
         self.update_config_dropdown()
@@ -751,14 +755,26 @@ class XMLParserApp(tk.Tk):
     def create_menu(self):
         menubar = tk.Menu(self)
         self.config(menu=menubar)
-        
+
         settings_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Settings", menu=settings_menu)
         settings_menu.add_command(label="Configs", command=self.open_configs)
+        settings_menu.add_separator()
+
+        decimal_menu = tk.Menu(settings_menu, tearoff=0)
+        settings_menu.add_cascade(label="Decimal separator", menu=decimal_menu)
+        decimal_menu.add_radiobutton(label="English  (1 234.56)", variable=self.decimal_var,
+                                     value="english", command=self.on_decimal_change)
+        decimal_menu.add_radiobutton(label="Swedish  (1 234,56)", variable=self.decimal_var,
+                                     value="swedish", command=self.on_decimal_change)
 
         dev_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Dev", menu=dev_menu)
         dev_menu.add_command(label="Open Folder", command=self.open_program_folder)
+
+    def on_decimal_change(self):
+        self.settings_manager.decimal_separator = self.decimal_var.get()
+        self.settings_manager.save()
 
     def open_program_folder(self):
         # Open the directory where settings are stored
@@ -1301,13 +1317,23 @@ class XMLParserApp(tk.Tk):
             return
 
         try:
+            swedish = self.settings_manager.decimal_separator == "swedish"
             with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
                 for tab_name, columns, rows, col_formats in self.tab_data:
                     df = pd.DataFrame(rows, columns=columns)
                     for col in df.columns:
                         fmt = col_formats.get(col, "")
                         if fmt == "Amount" or (not fmt and col.endswith('@Value')):
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                            if swedish:
+                                def _to_swedish(v):
+                                    s = str(v).strip().replace(",", ".")
+                                    try:
+                                        return f"{float(s):.2f}".replace(".", ",")
+                                    except (ValueError, TypeError):
+                                        return ""
+                                df[col] = df[col].fillna("").apply(_to_swedish)
+                            else:
+                                df[col] = pd.to_numeric(df[col], errors='coerce')
                         elif fmt == "String":
                             df[col] = df[col].fillna("").astype(str)
                     df.to_excel(writer, sheet_name=tab_name[:31], index=False)
