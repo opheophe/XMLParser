@@ -770,12 +770,22 @@ class XMLParserApp(tk.Tk):
 
         self.tab_data = []  # list of (tab_name, columns, rows, col_formats)
     
+    def _initial_dir(self):
+        """Return the best starting directory for any file dialog.
+
+        Uses the stored last-directory when it still exists on disk;
+        falls back to the user's home directory otherwise.
+        """
+        d = self.settings_manager.last_directory
+        if d and os.path.isdir(d):
+            return d
+        return os.path.expanduser("~")
+
     def open_file(self):
-        initial_dir = self.settings_manager.last_directory if self.settings_manager.last_directory else "."
         file_paths = filedialog.askopenfilenames(
             title="Select XML file(s)",
             filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
-            initialdir=initial_dir
+            initialdir=self._initial_dir()
         )
 
         if file_paths:
@@ -896,16 +906,21 @@ class XMLParserApp(tk.Tk):
                 path = leaf['path']
                 value = leaf['text']
                 if path in amount_columns:
-                    row[f"{path}@Value"] = value
-                    row[f"{path}@Ccy"] = leaf['attributes'].get('Ccy', '')
+                    val_key = f"{path}@Value"
+                    ccy_key = f"{path}@Ccy"
+                    new_ccy = leaf['attributes'].get('Ccy', '')
+                    if value or val_key not in row:
+                        row[val_key] = value
+                    if new_ccy or ccy_key not in row:
+                        row[ccy_key] = new_ccy
                 else:
                     if leaf['attributes']:
                         attr_parts = [f"{k}={v}" for k, v in leaf['attributes'].items()]
                         value = f"{value} ({' '.join(attr_parts)})" if value else ' '.join(attr_parts)
-                    if path in row and row[path] and value:
-                        row[path] = row[path] + " " + value
-                    else:
-                        row[path] = value
+                    if value:
+                        row[path] = (row[path] + " " + value) if row.get(path) else value
+                    elif path not in row:
+                        row[path] = ""
             rows.append(row)
 
         return columns, rows
@@ -996,12 +1011,21 @@ class XMLParserApp(tk.Tk):
 
         return new_columns, new_rows, target_format
 
-    def deduplicate_amount_values(self, columns, rows):
+    def deduplicate_amount_values(self, columns, rows, entry_boundaries=None):
+        """Clear repeated @Value entries within each entry.
+
+        entry_boundaries: set of row indices that start a new top-level entry.
+        last_values is reset at each boundary so amounts from one entry never
+        suppress the same amount in the next entry.
+        """
         value_cols = {col for col in columns if col.endswith('@Value')}
         if not rows or not value_cols:
             return rows
         last_values = {col: rows[0].get(col, "") for col in value_cols}
         for i in range(1, len(rows)):
+            if entry_boundaries and i in entry_boundaries:
+                last_values = {col: rows[i].get(col, "") for col in value_cols}
+                continue
             for col in value_cols:
                 curr = rows[i].get(col, "")
                 if curr == last_values[col]:
@@ -1009,6 +1033,19 @@ class XMLParserApp(tk.Tk):
                 elif curr != "":
                     last_values[col] = curr
         return rows
+
+    def _entry_row_boundaries(self, root):
+        """Return the set of row indices where each top-level repeating element
+        starts, so deduplicate_amount_values can reset between entries."""
+        record_tag, record_parent = self.find_record_info(root)
+        if not record_tag or record_parent is None:
+            return None
+        boundaries = set()
+        idx = 0
+        for entry_elem in record_parent.findall(record_tag):
+            boundaries.add(idx)
+            idx += len(self.collect_flat_records(entry_elem))
+        return boundaries
 
     def parse_with_config(self, root, config_tags, merge_rules=None):
         # config_tags entries are "TagName; SplitTabs" strings
@@ -1029,15 +1066,18 @@ class XMLParserApp(tk.Tk):
                 continue
 
             if split == "No" or len(elements) == 1:
-                # Combine all instances into one tab
+                # Combine all instances into one tab, processing each element
+                # independently so deduplication never crosses entry boundaries.
                 all_columns, all_rows = [], []
+                col_formats = {}
                 for elem in elements:
                     columns, rows = self.element_to_rows(elem)
+                    columns, rows, elem_formats = self.apply_column_merges(columns, rows, merge_rules or [])
                     rows = self.deduplicate_amount_values(columns, rows)
                     if not all_columns:
                         all_columns = columns
+                        col_formats = elem_formats
                     all_rows.extend(rows)
-                all_columns, all_rows, col_formats = self.apply_column_merges(all_columns, all_rows, merge_rules or [])
                 tabs.append((tag, all_columns, all_rows, col_formats))
             else:
                 for i, elem in enumerate(elements):
@@ -1090,7 +1130,8 @@ class XMLParserApp(tk.Tk):
                 else:
                     columns, rows = self.element_to_rows(root)
                     columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules)
-                    rows = self.deduplicate_amount_values(columns, rows)
+                    rows = self.deduplicate_amount_values(
+                        columns, rows, self._entry_row_boundaries(root))
                     tabs = [("Sheet1", columns, rows, col_formats)] if rows else []
 
                 for tab_name, columns, rows, col_formats in tabs:
@@ -1239,6 +1280,7 @@ class XMLParserApp(tk.Tk):
             title="Export to CSV",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
             defaultextension=".csv",
+            initialdir=self._initial_dir(),
             initialfile=self.default_filename(".csv", tab_name)
         )
 
@@ -1273,6 +1315,7 @@ class XMLParserApp(tk.Tk):
             title="Export to Excel",
             filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
             defaultextension=".xlsx",
+            initialdir=self._initial_dir(),
             initialfile=self.default_filename(".xlsx")
         )
 
