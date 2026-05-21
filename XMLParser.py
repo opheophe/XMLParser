@@ -12,6 +12,22 @@ import xml.etree.ElementTree as ET
 import csv
 import pandas as pd
 
+GITHUB_URL = "https://github.com/opheophe/XMLParser"
+
+def _get_version():
+    """Return the exact git tag for HEAD, or 'N/A' if not on a tagged commit."""
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--exact-match", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True
+        ).strip()
+        return tag if tag else "N/A"
+    except Exception:
+        return "N/A"
+
+_VERSION = _get_version()  # resolved once at startup; avoids subprocess delay on each About open
+
 def make_btn(parent, text, command=None, bg="#7F8C8D", fg="white",
              activebackground=None, activeforeground="white", **kwargs):
     if activebackground is None:
@@ -702,6 +718,36 @@ class XMLParserApp(tk.Tk):
         dev_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Dev", menu=dev_menu)
         dev_menu.add_command(label="Open Folder", command=self.open_program_folder)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About XMLParser…", command=self.show_about)
+        help_menu.add_command(label="View on GitHub", command=lambda: webbrowser.open(GITHUB_URL))
+
+    def show_about(self):
+        version = _VERSION
+        dlg = tk.Toplevel(self)
+        dlg.title("About XMLParser")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        pad = {"padx": 20, "pady": 6}
+
+        tk.Label(dlg, text="XMLParser", font=("TkDefaultFont", 16, "bold")).pack(**pad)
+        tk.Label(dlg, text=f"Version: {version}").pack(**pad)
+
+        link = tk.Label(dlg, text=GITHUB_URL, fg="#0078D7", cursor="hand2")
+        link.pack(**pad)
+        link.bind("<Button-1>", lambda e: webbrowser.open(GITHUB_URL))
+
+        tk.Button(dlg, text="Close", command=dlg.destroy, width=10).pack(pady=(4, 16))
+
+        # Centre over main window
+        self.update_idletasks()
+        dlg.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
 
     def on_decimal_change(self):
         self.settings_manager.decimal_separator = self.decimal_var.get()
