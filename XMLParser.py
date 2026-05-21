@@ -1033,11 +1033,11 @@ class XMLParserApp(tk.Tk):
                 all_columns, all_rows = [], []
                 for elem in elements:
                     columns, rows = self.element_to_rows(elem)
+                    rows = self.deduplicate_amount_values(columns, rows)
                     if not all_columns:
                         all_columns = columns
                     all_rows.extend(rows)
                 all_columns, all_rows, col_formats = self.apply_column_merges(all_columns, all_rows, merge_rules or [])
-                all_rows = self.deduplicate_amount_values(all_columns, all_rows)
                 tabs.append((tag, all_columns, all_rows, col_formats))
             else:
                 for i, elem in enumerate(elements):
