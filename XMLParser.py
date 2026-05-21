@@ -15,7 +15,17 @@ import pandas as pd
 GITHUB_URL = "https://github.com/opheophe/XMLParser"
 
 def _get_version():
-    """Return the exact git tag for HEAD, or 'N/A' if not on a tagged commit."""
+    """Return version string.
+    - Bundled exe: reads version.txt written by CI at build time.
+    - Dev/source: returns the exact git tag on HEAD, or 'N/A' if untagged.
+    """
+    if getattr(sys, 'frozen', False):
+        try:
+            version_file = os.path.join(sys._MEIPASS, 'version.txt')
+            with open(version_file, 'r') as f:
+                return f.read().strip()
+        except Exception:
+            return "N/A"
     try:
         tag = subprocess.check_output(
             ["git", "describe", "--tags", "--exact-match", "HEAD"],

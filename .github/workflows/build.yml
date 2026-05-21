@@ -40,13 +40,17 @@ jobs:
           if [[ "${{ matrix.os }}" == macos* ]]; then brew install create-dmg; fi
         shell: bash
 
+      - name: Write version file
+        run: echo "${{ github.ref_name }}" > version.txt
+        shell: bash
+
       - name: Build App
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            pyinstaller --onefile --windowed --icon=icon.ico XMLParser.py
+            pyinstaller --onefile --windowed --icon=icon.ico --add-data "version.txt;." XMLParser.py
           else
             # 1. Build the Mac App
-            pyinstaller --onedir --windowed --icon=icon.icns --exclude-module matplotlib --exclude-module scipy XMLParser.py
+            pyinstaller --onedir --windowed --icon=icon.icns --exclude-module matplotlib --exclude-module scipy --add-data "version.txt:." XMLParser.py
             
             # 2. Determine architecture for the filename
             if [ "${{ matrix.os }}" = "macos-15-intel" ]; then
