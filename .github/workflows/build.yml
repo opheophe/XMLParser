@@ -101,12 +101,25 @@ jobs:
           generate_release_notes: true
           body: |
             ## Installation Instructions
-            
+
             ### Windows
             Download `XMLParser.exe` and run it directly.
-            
+
             ### macOS
             **Important**: Due to macOS security, right-click the app and select "Open" the first time.
             This is normal for apps not from the App Store.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Purge old releases (keep 10 most recent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          # List all releases sorted by creation date (newest first), skip the 10 most recent
+          gh release list --repo "$REPO" --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+          | while read tag; do
+              echo "Deleting release and tag: $tag"
+              gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag
+            done
