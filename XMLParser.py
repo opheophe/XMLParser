@@ -1564,9 +1564,57 @@ class XMLParserApp(tk.Tk):
             for row in rows[:1000]:
                 tree.insert("", tk.END, values=[row.get(col, "") for col in columns])
 
+            # Single click on a cell → read-only overlay for text selection / copy
+            tree.bind("<ButtonRelease-1>", lambda e, t=tree: self._open_cell_overlay(e, t))
+
             self.notebook.add(frame, text=tab_name)
             self.tab_data.append((tab_name, columns, rows, col_formats))
-    
+
+    def _dismiss_cell_overlay(self):
+        """Destroy any active cell overlay."""
+        overlay = getattr(self, '_cell_overlay', None)
+        if overlay:
+            try:
+                overlay.destroy()
+            except tk.TclError:
+                pass
+            self._cell_overlay = None
+
+    def _open_cell_overlay(self, event, tree):
+        """Place a read-only Entry over the clicked cell so the user can select and copy text."""
+        self._dismiss_cell_overlay()
+
+        if tree.identify("region", event.x, event.y) != "cell":
+            return
+        col_id = tree.identify_column(event.x)
+        item   = tree.identify_row(event.y)
+        if not item:
+            return
+        bbox = tree.bbox(item, col_id)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+
+        col_idx = int(col_id[1:]) - 1
+        vals    = tree.item(item, "values")
+        value   = str(vals[col_idx]) if col_idx < len(vals) else ""
+
+        overlay = tk.Entry(tree, relief="solid", borderwidth=1)
+        overlay.insert(0, value)
+        overlay.configure(state="readonly")
+        overlay.place(x=x, y=y, width=w, height=h)
+        overlay.focus_set()
+        # Pre-select all so a single Ctrl+C copies everything immediately
+        overlay.after(10, lambda: overlay.select_range(0, tk.END))
+
+        overlay.bind("<Escape>",    lambda e: self._dismiss_cell_overlay())
+        overlay.bind("<FocusOut>",  lambda e: self._dismiss_cell_overlay())
+        overlay.bind("<Return>",    lambda e: self._dismiss_cell_overlay())
+        # Ctrl/Cmd+A selects all within the overlay
+        overlay.bind("<Control-a>", lambda e: overlay.select_range(0, tk.END))
+        overlay.bind("<Command-a>", lambda e: overlay.select_range(0, tk.END))
+        self._cell_overlay = overlay
+
     def default_filename(self, ext, tab_name=""):
         base = datetime.now().strftime(f"%Y-%m-%d %H%M%S")
         name = f"{base} {tab_name}" if tab_name else base
