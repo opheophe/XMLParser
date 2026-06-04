@@ -1304,7 +1304,7 @@ class XMLParserApp(tk.Tk):
 
         return new_columns, new_rows, target_format
 
-    def apply_output_columns(self, columns, rows, output_rules, tag=""):
+    def apply_output_columns(self, columns, rows, output_rules, tag="", col_formats=None):
         """Apply hide, reorder, and rename rules from the Output config section for a given tag-tab.
 
         Rules with an empty tag apply to all tabs; rules with a specific tag apply
@@ -1313,9 +1313,10 @@ class XMLParserApp(tk.Tk):
           3-part: "col; hide; order"               (oldest — no tag, no rename)
           4-part: "tag; col; hide; order"           (old — no rename)
           5-part: "tag; col; rename; hide; order"   (current)
+        col_formats is updated so renamed columns keep their format (Amount/String).
         """
         if not output_rules:
-            return columns, rows
+            return columns, rows, col_formats or {}
         hide_cols  = set()
         order_map  = {}
         rename_map = {}
@@ -1348,8 +1349,10 @@ class XMLParserApp(tk.Tk):
         unordered = [c for c in new_columns if c not in order_map]
         final_orig    = ordered + unordered
         final_columns = [rename_map.get(c, c) for c in final_orig]
-        new_rows = [{rename_map.get(col, col): row.get(col, '') for col in final_orig} for row in rows]
-        return final_columns, new_rows
+        new_rows      = [{rename_map.get(col, col): row.get(col, '') for col in final_orig} for row in rows]
+        # Remap col_formats so renamed columns retain their format type
+        new_formats = {rename_map.get(c, c): fmt for c, fmt in (col_formats or {}).items()}
+        return final_columns, new_rows, new_formats
 
     def deduplicate_amount_values(self, columns, rows, entry_boundaries=None):
         """Clear repeated @Value entries within each entry.
@@ -1419,7 +1422,7 @@ class XMLParserApp(tk.Tk):
                         col_formats = elem_formats
                     all_rows.extend(rows)
                 if output_rules:
-                    all_columns, all_rows = self.apply_output_columns(all_columns, all_rows, output_rules, tag)
+                    all_columns, all_rows, col_formats = self.apply_output_columns(all_columns, all_rows, output_rules, tag, col_formats)
                 tabs.append((tag, all_columns, all_rows, col_formats))
             else:
                 for i, elem in enumerate(elements):
@@ -1427,7 +1430,7 @@ class XMLParserApp(tk.Tk):
                     columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules or [])
                     rows = self.deduplicate_amount_values(columns, rows)
                     if output_rules:
-                        columns, rows = self.apply_output_columns(columns, rows, output_rules, tag)
+                        columns, rows, col_formats = self.apply_output_columns(columns, rows, output_rules, tag, col_formats)
                     tabs.append((f"{tag} {i + 1}", columns, rows, col_formats))
 
         return tabs
