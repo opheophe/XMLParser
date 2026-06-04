@@ -314,11 +314,6 @@ class ConfigsDialog(tk.Toplevel):
                                       bg="#E74C3C", fg="white",
                                       activebackground="#C0392B", activeforeground="white")
         self.delete_button.pack(side=tk.LEFT, padx=5)
-        self.info_button = make_btn(buttons_frame, text="Info",
-                                    command=self.show_info,
-                                    bg="#3498DB", fg="white",
-                                    activebackground="#2980B9", activeforeground="white")
-        self.info_button.pack(side=tk.LEFT, padx=5)
 
         # ── Tags table ─────────────────────────────────────────────────────────
         tags_outer = tk.Frame(content)
@@ -839,74 +834,6 @@ class ConfigsDialog(tk.Toplevel):
 
     # ── info dialog ───────────────────────────────────────────────────────────
 
-    def show_info(self):
-        info = tk.Toplevel(self)
-        info.title("Config Settings Guide")
-        info.transient(self)
-        info.grab_set()
-        info.resizable(False, False)
-        text = (
-            "TAGS TO EXTRACT\n"
-            "───────────────\n"
-            "Each row specifies one XML tag to search for in the loaded file.\n"
-            "\n"
-            "  Tag         — The XML tag name to look for.\n"
-            "  Split Tabs  — What to do when multiple elements with this\n"
-            "                tag are found:\n"
-            "\n"
-            "    Yes  Each instance gets its own tab (Tag 1, Tag 2, …).\n"
-            "    No   All instances are combined into a single tab.\n"
-            "\n"
-            "RENAME AND MERGE COLUMNS\n"
-            "────────────────────────\n"
-            "The table has four columns:\n"
-            "\n"
-            "  Action        — What to do with the source column:\n"
-            "\n"
-            "    New Line  When a single row has values in more than one\n"
-            "              source mapped to the same target, each unique\n"
-            "              value gets its own row so no data is lost.\n"
-            "\n"
-            "    Merge     Multiple source values are joined into one cell\n"
-            "              separated by a space.\n"
-            "              Example: 'Main St' + '12' → 'Main St 12'\n"
-            "\n"
-            "  Source Column — The XML path of the source column.\n"
-            "  Target Name   — The display name for the output column.\n"
-            "  Format        — How the column is typed in Excel export:\n"
-            "\n"
-            "    (blank)   Default — @Value columns are numeric, others text.\n"
-            "    String    Force text.\n"
-            "    Amount    Force numeric.\n"
-            "\n"
-            "• Multiple rows with the same Target Name map several source\n"
-            "  columns into one output column.\n"
-            "• Duplicate values across sources are never repeated.\n"
-            "• Double-click any cell to edit it.\n"
-            "\n"
-            "OUTPUT\n"
-            "──────\n"
-            "Controls which columns appear in the final output and in what order.\n"
-            "When a file is loaded the list is pre-populated with all parsed columns.\n"
-            "\n"
-            "  Column Name — The output column name (after any renaming above).\n"
-            "  Hide        — Click to toggle. 'Yes' removes the column from output.\n"
-            "  Order       — Integer. Columns with an order number are placed first,\n"
-            "                sorted by that number. Columns without a number follow\n"
-            "                in their natural order.\n"
-            "\n"
-            "Only rows where Hide=Yes or Order is set are saved.\n"
-            "Rows without either setting are display-only and not persisted.\n"
-        )
-        tk.Label(info, text=text, justify=tk.LEFT, font=("Courier", 9),
-                 padx=15, pady=10).pack()
-        make_btn(info, text="Close", command=info.destroy,
-                 bg="#7F8C8D", fg="white",
-                 activebackground="#616A6B", activeforeground="white").pack(pady=(0, 10))
-        info.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width()  - info.winfo_width())  // 2
-        y = self.winfo_y() + (self.winfo_height() - info.winfo_height()) // 2
-        info.geometry(f"+{x}+{y}")
 
     def update_parent_dropdown(self):
         self.master.update_config_dropdown()
@@ -968,8 +895,112 @@ class XMLParserApp(tk.Tk):
 
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="Config…", command=self.show_config_help)
+        help_menu.add_separator()
         help_menu.add_command(label="About XMLParser…", command=self.show_about)
         help_menu.add_command(label="View on GitHub", command=lambda: webbrowser.open(GITHUB_URL))
+
+    def show_config_help(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Config Settings Guide")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(True, True)
+        dlg.geometry("620x520")
+
+        text_frame = tk.Frame(dlg)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 5))
+
+        vsb = ttk.Scrollbar(text_frame, orient="vertical")
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        txt = tk.Text(text_frame, wrap=tk.WORD, font=("Courier", 9),
+                      yscrollcommand=vsb.set, relief="flat",
+                      padx=8, pady=6, state="normal")
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=txt.yview)
+
+        content = (
+            "TAGS TO EXTRACT\n"
+            "───────────────\n"
+            "Each row specifies one XML tag to search for in the loaded file.\n"
+            "\n"
+            "  Tag         — The XML element name to look for (e.g. Ntry).\n"
+            "  Split Tabs  — What to do when multiple elements with this\n"
+            "                tag are found in the file:\n"
+            "\n"
+            "    Yes  Each instance gets its own tab (Tag 1, Tag 2, …).\n"
+            "    No   All instances are combined into a single tab.\n"
+            "\n"
+            "\n"
+            "RENAME AND MERGE COLUMNS\n"
+            "────────────────────────\n"
+            "Maps raw XML paths to friendlier column names and controls how\n"
+            "multiple source fields are combined.\n"
+            "\n"
+            "  Action        — How to combine values when multiple source\n"
+            "                  columns map to the same target:\n"
+            "\n"
+            "    New Line  Each unique value gets its own row so no data\n"
+            "              is lost. If one row has values in two sources,\n"
+            "              two output rows are produced.\n"
+            "\n"
+            "    Merge     All source values are joined into one cell,\n"
+            "              separated by a space.\n"
+            "              Example: 'Main St' + '12' → 'Main St 12'\n"
+            "\n"
+            "  Source Column — The raw XML path of the source column\n"
+            "                  (e.g. NtryDtls/TxDtls/RmtInf/Strd/Nb).\n"
+            "  Target Name   — The display name for the merged output column.\n"
+            "  Format        — How the column is typed in Excel export:\n"
+            "\n"
+            "    (blank)   Default — @Value columns are numeric, others text.\n"
+            "    String    Force the column to text even if it looks numeric.\n"
+            "    Amount    Force the column to numeric.\n"
+            "\n"
+            "Notes:\n"
+            "• Multiple rows sharing the same Target Name funnel several\n"
+            "  source columns into one output column.\n"
+            "• Identical values across sources are deduplicated (shown once).\n"
+            "• Double-click any cell to edit it.\n"
+            "\n"
+            "\n"
+            "OUTPUT\n"
+            "──────\n"
+            "Fine-tunes which columns appear in the final output, what they\n"
+            "are called, and in what order they appear. The list is\n"
+            "pre-populated with all columns from the most recent parse.\n"
+            "\n"
+            "  Tag         — Limit this rule to a specific tag-tab.\n"
+            "                Leave blank to apply to all tabs.\n"
+            "  Column Name — The column as it comes out of parsing/merging.\n"
+            "  Rename to   — Optional. If filled in, the column header in\n"
+            "                the output is replaced with this name.\n"
+            "                Leave blank to keep the original name.\n"
+            "  Hide        — Single-click to toggle Yes/No.\n"
+            "                Yes removes the column from all output.\n"
+            "                A warning appears in the toolbar if a value\n"
+            "                (Amount) column is hidden.\n"
+            "  Order       — Integer. Columns with an order number are\n"
+            "                placed first, sorted ascending. Columns without\n"
+            "                a number follow in their default order.\n"
+            "\n"
+            "Only rows where Hide = Yes, Order, or Rename to are set are\n"
+            "saved. Display-only rows (nothing configured) are not persisted\n"
+            "but reappear automatically the next time a file is parsed.\n"
+        )
+
+        txt.insert("1.0", content)
+        txt.config(state="disabled")
+
+        make_btn(dlg, text="Close", command=dlg.destroy,
+                 bg="#7F8C8D", fg="white",
+                 activebackground="#616A6B", activeforeground="white").pack(pady=(0, 10))
+
+        dlg.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width()  - dlg.winfo_width())  // 2
+        y = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
 
     def show_about(self):
         version = _VERSION
@@ -1056,6 +1087,16 @@ class XMLParserApp(tk.Tk):
                                             bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white",
                                             disabledforeground="black")
         self.export_excel_button.pack(side=tk.LEFT, padx=10)
+
+        # Status chip — shown after parsing (success or hidden-value warning)
+        # Outer frame acts as a 1 px coloured border
+        self.status_border = tk.Frame(button_frame, bd=0)
+        self.status_inner  = tk.Frame(self.status_border, bd=0)
+        self.status_label  = tk.Label(self.status_inner, padx=10, pady=3,
+                                      font=("TkDefaultFont", 9, "bold"))
+        self.status_label.pack()
+        self.status_inner.pack(padx=1, pady=1)
+        # Not packed yet — shown on demand
         
         # Notebook
         self.notebook = ttk.Notebook(self.lower_frame)
@@ -1344,6 +1385,12 @@ class XMLParserApp(tk.Tk):
                     pass
             if rename:
                 rename_map[col] = rename
+        # Flag if any hidden column is a value/amount column
+        if hide_cols:
+            fmts = col_formats or {}
+            if any(c.endswith('@Value') or fmts.get(c) == 'Amount' for c in hide_cols):
+                self._hidden_value_cols = True
+
         new_columns = [col for col in columns if col not in hide_cols]
         ordered   = sorted([c for c in new_columns if c in order_map], key=lambda c: order_map[c])
         unordered = [c for c in new_columns if c not in order_map]
@@ -1458,6 +1505,7 @@ class XMLParserApp(tk.Tk):
     def parse_and_display_xml(self, file_paths):
         if isinstance(file_paths, str):
             file_paths = (file_paths,)
+        self._hidden_value_cols = False   # reset before each parse
         try:
             selected_config = self.config_var.get()
             has_config = selected_config and selected_config != "No configs"
@@ -1506,6 +1554,19 @@ class XMLParserApp(tk.Tk):
                                for name, (cols, rows, fmts) in merged.items()])
             self.export_button.config(state="normal")
             self.export_excel_button.config(state="normal")
+
+            # Update and show the status chip
+            if getattr(self, '_hidden_value_cols', False):
+                self.status_border.config(bg="#E67E22")
+                self.status_inner.config(bg="#FEF0E7")
+                self.status_label.config(text="⚠ Value columns hidden",
+                                         fg="#D35400", bg="#FEF0E7")
+            else:
+                self.status_border.config(bg="#27AE60")
+                self.status_inner.config(bg="#EAF7EE")
+                self.status_label.config(text="✓ Parsed successfully",
+                                         fg="#1E8449", bg="#EAF7EE")
+            self.status_border.pack(side=tk.LEFT, padx=(10, 0))
 
         except Exception as e:
             import traceback
@@ -1732,10 +1793,19 @@ class XMLParserApp(tk.Tk):
                                     try:
                                         return f"{float(s):.2f}".replace(".", ",")
                                     except (ValueError, TypeError):
-                                        return ""
+                                        return str(v)   # preserve non-numeric as-is
                                 df[col] = df[col].fillna("").apply(_to_swedish)
                             else:
-                                df[col] = pd.to_numeric(df[col], errors='coerce')
+                                # Convert parseable values to float; keep others as-is
+                                def _safe_numeric(v):
+                                    s = str(v).strip()
+                                    if not s:
+                                        return v
+                                    try:
+                                        return float(s.replace(",", "."))
+                                    except (ValueError, TypeError):
+                                        return v
+                                df[col] = df[col].fillna("").apply(_safe_numeric)
                         elif fmt == "String":
                             df[col] = df[col].fillna("").astype(str)
                     df.to_excel(writer, sheet_name=tab_name[:31], index=False)
