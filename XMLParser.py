@@ -1223,13 +1223,17 @@ class XMLParserApp(tk.Tk):
             return [], []
 
         all_paths = sorted(set(leaf['path'] for leaves in all_leaf_lists for leaf in leaves))
+        # Detect amount columns from actual data: any element that carries a Ccy attribute.
         amount_columns = set()
+        for leaves in all_leaf_lists:
+            for leaf in leaves:
+                if leaf['attributes'].get('Ccy'):
+                    amount_columns.add(leaf['path'])
         columns = []
         for col in all_paths:
-            if col.endswith('/Amt') or col.endswith('/RmtdAmt'):
+            if col in amount_columns:
                 columns.append(f"{col}@Value")
                 columns.append(f"{col}@Ccy")
-                amount_columns.add(col)
             else:
                 columns.append(col)
 
@@ -1459,14 +1463,17 @@ class XMLParserApp(tk.Tk):
                 # Combine all instances into one tab, processing each element
                 # independently so deduplication never crosses entry boundaries.
                 all_columns, all_rows = [], []
+                seen_cols = set()
                 col_formats = {}
                 for elem in elements:
                     columns, rows = self.element_to_rows(elem)
                     columns, rows, elem_formats = self.apply_column_merges(columns, rows, merge_rules or [])
                     rows = self.deduplicate_amount_values(columns, rows)
-                    if not all_columns:
-                        all_columns = columns
-                        col_formats = elem_formats
+                    for col in columns:
+                        if col not in seen_cols:
+                            all_columns.append(col)
+                            seen_cols.add(col)
+                    col_formats.update(elem_formats)
                     all_rows.extend(rows)
                 if output_rules:
                     all_columns, all_rows, col_formats = self.apply_output_columns(all_columns, all_rows, output_rules, tag, col_formats)
