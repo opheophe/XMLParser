@@ -1130,7 +1130,7 @@ class XMLParserApp(tk.Tk):
             for child in elem:
                 self._collect_sibling_leaves(child, rel_path + "/" + child.tag, row)
 
-    def collect_value_rows(self, root, value_path_str, rename, parent_map):
+    def collect_value_rows(self, root, value_path_str, rename, parent_map, on_progress=None):
         """Find all occurrences of value_path_str and build one row per occurrence.
 
         Each row contains the amount value plus all sibling context collected
@@ -1144,10 +1144,13 @@ class XMLParserApp(tk.Tk):
         if not found:
             return [], [], {}
 
+        total = len(found)
         rows = []
         all_keys = set()
 
-        for val_elem in found:
+        for idx, val_elem in enumerate(found):
+            if on_progress:
+                on_progress(idx + 1, total)
             row = {
                 col_name: val_elem.text.strip(),
                 col_name + "@Ccy": val_elem.attrib.get('Ccy', ''),
@@ -1181,10 +1184,11 @@ class XMLParserApp(tk.Tk):
         col_formats = {col_name: "Amount"}
         return columns, rows, col_formats
 
-    def parse_with_value_tags(self, root, value_tag_entries, output_rules=None):
+    def parse_with_value_tags(self, root, value_tag_entries, output_rules=None, progress_cb=None):
         """Parse XML using value-tag entries of the form 'path; sign; rename'.
 
         Returns list of (tab_name, columns, rows, col_formats).
+        progress_cb(path, done, total) is called during each collect_value_rows call.
         """
         entries = []
         for entry in value_tag_entries:
@@ -1220,8 +1224,15 @@ class XMLParserApp(tk.Tk):
             col_formats = {}
 
             for e in group_entries:
+                _path = e['path']
+                def _make_prog(_p=_path):
+                    def _cb(done, total):
+                        if progress_cb:
+                            progress_cb(_p, done, total)
+                    return _cb
                 cols, rows, fmts = self.collect_value_rows(
-                    root, e['path'], e['rename'] if e['rename'] else e['path'], parent_map)
+                    root, e['path'], e['rename'] if e['rename'] else e['path'], parent_map,
+                    on_progress=_make_prog() if progress_cb else None)
                 if not rows:
                     continue
 
@@ -1482,9 +1493,9 @@ class XMLParserApp(tk.Tk):
 
             ttk.Separator(self._ctrl_inner, orient="horizontal").pack(fill=tk.X, padx=8, pady=6)
 
-            parsed_abs = sum(abs(v) for v in parsed_sums.values())
-            doc_total  = sum(v for _, v in doc_sums)
-            mismatch   = abs(parsed_abs - doc_total) > 0.005
+            raw_abs   = sum(v for v in raw_sums.values())   # unsigned XML totals, unaffected by sign setting
+            doc_total = sum(v for _, v in doc_sums)
+            mismatch  = abs(raw_abs - doc_total) > 0.005
 
             chip_bg  = "#E74C3C" if mismatch else "#27AE60"
             chip_txt = "MISMATCH" if mismatch else "OK"
@@ -1525,7 +1536,14 @@ class XMLParserApp(tk.Tk):
 
                     if config_tags:
                         self._hidden_value_cols = False
-                        tabs = self.parse_with_value_tags(root, config_tags, output_rules)
+                        n_files = len(file_paths)
+                        def _make_prog_cb(_i=i):
+                            def _cb(path, done, total):
+                                msg = f"File {_i+1}/{n_files}: {path} ({done}/{total})"
+                                self.after(0, lambda m=msg: prog.set_message(m))
+                            return _cb
+                        tabs = self.parse_with_value_tags(root, config_tags, output_rules,
+                                                          progress_cb=_make_prog_cb())
                         if self._hidden_value_cols:
                             hidden = True
                     else:
