@@ -1,4 +1,5 @@
 import sys
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import configparser
@@ -14,11 +15,13 @@ import pandas as pd
 
 GITHUB_URL = "https://github.com/opheophe/XMLParser"
 
+DEFAULT_VALUE_TAGS = [
+    "RmtdAmt; Positive; AmountDebit",
+    "CdtNoteAmt; Negative; AmountCredit",
+]
+
 def _get_version():
-    """Return version string.
-    - Bundled exe: reads version.txt written by CI at build time.
-    - Dev/source: returns the exact git tag on HEAD, or 'N/A' if untagged.
-    """
+    """Return version string."""
     if getattr(sys, 'frozen', False):
         try:
             version_file = os.path.join(sys._MEIPASS, 'version.txt')
@@ -36,7 +39,7 @@ def _get_version():
     except Exception:
         return "N/A"
 
-_VERSION = _get_version()  # resolved once at startup; avoids subprocess delay on each About open
+_VERSION = _get_version()
 
 def make_btn(parent, text, command=None, bg="#7F8C8D", fg="white",
              activebackground=None, activeforeground="white", **kwargs):
@@ -50,20 +53,15 @@ def make_btn(parent, text, command=None, bg="#7F8C8D", fg="white",
 
 class SettingsManager:
     def __init__(self, settings_file="Settings.ini"):
-        # Use user's home directory for settings to avoid read-only app bundle issues
         import tempfile
         if getattr(sys, 'frozen', False):
-            # Running as PyInstaller bundle
             if sys.platform == "win32":
-                # Windows: use AppData\Roaming
                 app_data_dir = os.path.join(os.environ['APPDATA'], 'XMLParser')
             else:
-                # macOS/Linux: use hidden folder in home
                 app_data_dir = os.path.join(os.path.expanduser('~'), '.XMLParser')
             os.makedirs(app_data_dir, exist_ok=True)
             self.settings_file = os.path.join(app_data_dir, settings_file)
         else:
-            # Running as script
             self.settings_file = settings_file
         self.config = configparser.ConfigParser()
         self.configs = {}
@@ -77,26 +75,35 @@ class SettingsManager:
         self.window_width = 1000
         self.window_height = 800
         self.load()
-    
+
+    def _is_old_format(self, entries):
+        """Return True if all non-empty entries use the old 'Tag; Yes/No' format."""
+        if not entries:
+            return False
+        for e in entries:
+            parts = [p.strip() for p in e.split(';')]
+            if len(parts) >= 2 and parts[1] not in ("Yes", "No", "Positive", "Negative"):
+                return False
+            if len(parts) >= 2 and parts[1] in ("Positive", "Negative"):
+                return False
+        return True
+
     def load(self):
         if os.path.exists(self.settings_file):
             self.config.read(self.settings_file)
-            
-            # Window settings
+
             if "Window" in self.config:
                 window = self.config["Window"]
                 self.window_x = window.getint("x", 100)
                 self.window_y = window.getint("y", 100)
                 self.window_width = window.getint("width", 1000)
                 self.window_height = window.getint("height", 800)
-            
-            # Last directory
+
             if "General" in self.config:
                 self.last_directory = self.config["General"].get("last_directory", "")
                 self.last_selected_config = self.config["General"].get("last_selected_config", "")
                 self.decimal_separator = self.config["General"].get("decimal_separator", "english")
-            
-            # Configs
+
             self.configs = {}
             self.merge_columns = {}
             self.output_columns = {}
@@ -104,69 +111,49 @@ class SettingsManager:
                 if section.startswith("Config:"):
                     config_name = section[7:]
                     values = self.config[section].get("values", "")
-                    self.configs[config_name] = [v for v in values.split("\n") if v] if values else []
+                    entries = [v for v in values.split("\n") if v] if values else []
+                    # Auto-migrate CAMT profile if it has old-format entries
+                    if config_name == "CAMT" and self._is_old_format(entries):
+                        entries = list(DEFAULT_VALUE_TAGS)
+                    self.configs[config_name] = entries
                     merge = self.config[section].get("merge", "")
                     self.merge_columns[config_name] = [v for v in merge.split("\n") if v] if merge else []
                     output = self.config[section].get("output", "")
                     self.output_columns[config_name] = [v for v in output.split("\n") if v] if output else []
         else:
-            # Create default CAMT config
-            self.configs["CAMT"] = [
-                "GrpHdr; Yes",
-                "Acct; Yes",
-                "TxsSummry; Yes",
-                "Ntry; No"
-            ]
-            self.merge_columns["CAMT"] = [
-                "New Line; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocAmt/RmtdAmt@Value; AmountCol1; Amount",
-                "New Line; Strd/RfrdDocAmt/RmtdAmt@Value; AmountCol1; Amount",
-                "New Line; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocAmt/RmtdAmt@Ccy; Currency;",
-                "New Line; Strd/RfrdDocAmt/RmtdAmt@Ccy; Currency;",
-                "Merge; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocInf/Nb; DocInfo;",
-                "Merge; Strd/RfrdDocInf/Nb; DocInfo;",
-                "Hide; NtryDtls/TxDtls/RmtInf/Strd/RfrdDocInf/Tp/CdOrPrtry/Cd; Type;",
-                "Hide; Strd/RfrdDocInf/Tp/CdOrPrtry/Cd; Type;",
-                "Merge; NtryDtls/TxDtls/RmtInf/Strd/AddtlRmtInf; DocInfo;",
-                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/AdrLine; Address;",
-                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/Ctry; Address;",
-                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/PstCd; Address;",
-                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/StrtNm; Address;",
-                "Merge; NtryDtls/TxDtls/RltdPties/Dbtr/PstlAdr/TwnNm; Address;",
-                "Hide; Ntry/BkTxCd/Domn/Cd; ;"
-            ]
+            self.configs["CAMT"] = list(DEFAULT_VALUE_TAGS)
+            self.merge_columns["CAMT"] = []
+            self.output_columns["CAMT"] = []
             self.save()
-    
+
     def save(self):
         self.config = configparser.ConfigParser()
-        
-        # Window settings
+
         self.config["Window"] = {
             "x": str(self.window_x),
             "y": str(self.window_y),
             "width": str(self.window_width),
             "height": str(self.window_height)
         }
-        
-        # General settings
+
         self.config["General"] = {
             "last_directory": self.last_directory,
             "last_selected_config": self.last_selected_config,
             "decimal_separator": self.decimal_separator
         }
-        
-        # Configs
+
         for config_name, values in self.configs.items():
             self.config[f"Config:{config_name}"] = {
                 "values": "\n".join(values),
                 "merge": "\n".join(self.merge_columns.get(config_name, [])),
                 "output": "\n".join(self.output_columns.get(config_name, []))
             }
-        
+
         with open(self.settings_file, "w") as f:
             self.config.write(f)
-    
+
     def add_config(self, name, values=None):
-        self.configs[name] = values if values else []
+        self.configs[name] = values if values else list(DEFAULT_VALUE_TAGS)
         self.merge_columns[name] = []
         self.output_columns[name] = []
         self.save()
@@ -196,6 +183,13 @@ class SettingsManager:
             self.output_columns[name] = rules
             self.save()
 
+    def reset_config(self, name):
+        if name in self.configs:
+            self.configs[name] = list(DEFAULT_VALUE_TAGS)
+            self.merge_columns[name] = []
+            self.output_columns[name] = []
+            self.save()
+
     def get_config_names(self):
         return list(self.configs.keys())
 
@@ -204,18 +198,16 @@ class SettingsManager:
 
     def get_merge_columns(self, name):
         return self.merge_columns.get(name, [])
-    
+
     def validate_window_position(self):
-        # Get screen dimensions
         root = tk.Tk()
         root.withdraw()
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         root.destroy()
-        
-        # Check if window is within screen bounds (with some tolerance)
+
         tolerance = 50
-        if (self.window_x < -tolerance or 
+        if (self.window_x < -tolerance or
             self.window_y < -tolerance or
             self.window_x + self.window_width > screen_width + tolerance or
             self.window_y + self.window_height > screen_height + tolerance):
@@ -232,24 +224,22 @@ class ConfigsDialog(tk.Toplevel):
         self.settings_manager = settings_manager
         self.initial_config = initial_config
         self.title("Configs")
-        self.geometry("680x820")
+        self.geometry("680x740")
         self.minsize(500, 500)
         self.transient(parent)
         self.grab_set()
 
         self.pending_tags   = {}   # {config_name: [tag_entry_strings]}
-        self.pending_merge  = {}   # {config_name: [rule_strings]}
         self.pending_output = {}   # {config_name: [output_row_strings]}
 
         self.create_widgets()
         self.refresh_config_list()
 
-        # Center on parent
         self.update_idletasks()
         x = parent.winfo_x() + (parent.winfo_width()  - self.winfo_width())  // 2
         y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
         self.geometry(f"+{x}+{y}")
-    
+
     # ── widget construction ───────────────────────────────────────────────────
 
     def create_widgets(self):
@@ -314,21 +304,28 @@ class ConfigsDialog(tk.Toplevel):
                                       bg="#E74C3C", fg="white",
                                       activebackground="#C0392B", activeforeground="white")
         self.delete_button.pack(side=tk.LEFT, padx=5)
+        self.reset_button = make_btn(buttons_frame, text="Reset config",
+                                     command=self.reset_config,
+                                     bg="#E67E22", fg="white",
+                                     activebackground="#CA6F1E", activeforeground="white")
+        self.reset_button.pack(side=tk.LEFT, padx=5)
 
-        # ── Tags table ─────────────────────────────────────────────────────────
+        # ── Value-tags to extract table ────────────────────────────────────────
         tags_outer = tk.Frame(content)
         tags_outer.pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(tags_outer, text="Tags to extract:").pack(anchor=tk.W)
+        tk.Label(tags_outer, text="Value-tags to extract:").pack(anchor=tk.W)
 
         tags_table_frame = tk.Frame(tags_outer)
         tags_table_frame.pack(fill=tk.X)
         self.tags_tree = ttk.Treeview(tags_table_frame,
-                                      columns=("tag", "split"),
+                                      columns=("path", "sign", "rename"),
                                       show="headings", height=6)
-        self.tags_tree.heading("tag",   text="Tag")
-        self.tags_tree.heading("split", text="Split Tabs")
-        self.tags_tree.column("tag",   width=300, minwidth=100, stretch=True)
-        self.tags_tree.column("split", width=80,  minwidth=70,  stretch=False)
+        self.tags_tree.heading("path",   text="Path")
+        self.tags_tree.heading("sign",   text="Sign")
+        self.tags_tree.heading("rename", text="Rename")
+        self.tags_tree.column("path",   width=260, minwidth=100, stretch=True)
+        self.tags_tree.column("sign",   width=90,  minwidth=70,  stretch=False)
+        self.tags_tree.column("rename", width=130, minwidth=70,  stretch=False)
         tags_vsb = ttk.Scrollbar(tags_table_frame, orient="vertical",
                                  command=self.tags_tree.yview)
         self.tags_tree.configure(yscrollcommand=tags_vsb.set)
@@ -342,40 +339,6 @@ class ConfigsDialog(tk.Toplevel):
                  bg="#27AE60", fg="white",
                  activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=(0, 5))
         make_btn(tags_btn_frame, text="Delete Row", command=self.delete_tags_row,
-                 bg="#E74C3C", fg="white",
-                 activebackground="#C0392B", activeforeground="white").pack(side=tk.LEFT)
-
-        # ── Merge columns table ────────────────────────────────────────────────
-        merge_outer = tk.Frame(content)
-        merge_outer.pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(merge_outer, text="Rename and merge columns:").pack(anchor=tk.W)
-
-        merge_table_frame = tk.Frame(merge_outer)
-        merge_table_frame.pack(fill=tk.X)
-        self.merge_tree = ttk.Treeview(merge_table_frame,
-                                       columns=("action", "source", "target", "format"),
-                                       show="headings", height=8)
-        self.merge_tree.heading("action", text="Action")
-        self.merge_tree.heading("source", text="Source Column")
-        self.merge_tree.heading("target", text="Target Name")
-        self.merge_tree.heading("format", text="Format")
-        self.merge_tree.column("action", width=80,  minwidth=70,  stretch=False)
-        self.merge_tree.column("source", width=220, minwidth=100, stretch=True)
-        self.merge_tree.column("target", width=100, minwidth=70,  stretch=True)
-        self.merge_tree.column("format", width=70,  minwidth=60,  stretch=False)
-        merge_vsb = ttk.Scrollbar(merge_table_frame, orient="vertical",
-                                  command=self.merge_tree.yview)
-        self.merge_tree.configure(yscrollcommand=merge_vsb.set)
-        self.merge_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        merge_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.merge_tree.bind("<Double-1>", self.on_merge_cell_edit)
-
-        merge_btn_frame = tk.Frame(merge_outer)
-        merge_btn_frame.pack(fill=tk.X, pady=(3, 0))
-        make_btn(merge_btn_frame, text="Add Row", command=self.add_merge_row,
-                 bg="#27AE60", fg="white",
-                 activebackground="#1E8449", activeforeground="white").pack(side=tk.LEFT, padx=(0, 5))
-        make_btn(merge_btn_frame, text="Delete Row", command=self.delete_merge_row,
                  bg="#E74C3C", fg="white",
                  activebackground="#C0392B", activeforeground="white").pack(side=tk.LEFT)
 
@@ -442,30 +405,21 @@ class ConfigsDialog(tk.Toplevel):
             self._load_config(self.current_config)
 
     def _buffer_current_edits(self):
-        tags, merge = self._read_ui()
+        tags = self._read_ui()
         output = self._read_output_ui()
         self.pending_tags[self.current_config]   = tags
-        self.pending_merge[self.current_config]  = merge
         self.pending_output[self.current_config] = output
 
     def _read_ui(self):
         tags = []
         for item in self.tags_tree.get_children():
-            vals = self.tags_tree.item(item, "values")
-            tag   = vals[0].strip() if len(vals) > 0 else ""
-            split = vals[1].strip() if len(vals) > 1 else "Yes"
-            if tag:
-                tags.append(f"{tag}; {split}")
-        merge = []
-        for item in self.merge_tree.get_children():
-            vals   = self.merge_tree.item(item, "values")
-            action = vals[0].strip() if len(vals) > 0 else "New Line"
-            source = vals[1].strip() if len(vals) > 1 else ""
-            target = vals[2].strip() if len(vals) > 2 else ""
-            fmt    = vals[3].strip() if len(vals) > 3 else ""
-            if source:
-                merge.append(f"{action}; {source}; {target}; {fmt}")
-        return tags, merge
+            vals   = self.tags_tree.item(item, "values")
+            path   = vals[0].strip() if len(vals) > 0 else ""
+            sign   = vals[1].strip() if len(vals) > 1 else "Positive"
+            rename = vals[2].strip() if len(vals) > 2 else ""
+            if path:
+                tags.append(f"{path}; {sign}; {rename}")
+        return tags
 
     def _read_output_ui(self):
         rows = []
@@ -478,7 +432,6 @@ class ConfigsDialog(tk.Toplevel):
             order  = vals[4].strip() if len(vals) > 4 else ""
             if not col:
                 continue
-            # Only persist rows that actually configure something
             if hide == "Yes" or order or rename:
                 rows.append(f"{tag}; {col}; {rename}; {hide}; {order}")
         return rows
@@ -488,7 +441,6 @@ class ConfigsDialog(tk.Toplevel):
         tab_data = getattr(self.master, "tab_data", [])
         seen = []
         for tab_name, columns, _, _ in tab_data:
-            # Strip trailing number for split tabs: "Ntry 1" → "Ntry"
             parts = tab_name.rsplit(' ', 1)
             base_tag = parts[0] if len(parts) == 2 and parts[1].isdigit() else tab_name
             for col in columns:
@@ -504,49 +456,34 @@ class ConfigsDialog(tk.Toplevel):
         for item in self.tags_tree.get_children():
             self.tags_tree.delete(item)
         for entry in tags:
-            parts = [p.strip() for p in entry.split(';')]
-            tag   = parts[0] if len(parts) > 0 else ""
-            split = parts[1] if len(parts) > 1 else "Yes"
-            if split not in ("Yes", "No"):
-                split = "Yes"
-            self.tags_tree.insert("", tk.END, values=(tag, split))
-
-        # ── merge (Hide rules are filtered out and migrated to output) ──
-        merge = self.pending_merge.get(config_name,
-                self.settings_manager.get_merge_columns(config_name))
-        migrated_hides = {}   # col -> True for any Hide rules found in merge
-        for item in self.merge_tree.get_children():
-            self.merge_tree.delete(item)
-        for rule in merge:
-            parts  = [p.strip() for p in rule.split(';')]
-            action = parts[0] if len(parts) > 0 else "New Line"
-            source = parts[1] if len(parts) > 1 else ""
-            target = parts[2] if len(parts) > 2 else ""
-            fmt    = parts[3] if len(parts) > 3 else ""
-            if action not in ("New Line", "Merge", "Hide"):
-                if target in ("New Line", "Merge", "Hide"):
-                    action, target = target, action
-                else:
-                    action = "New Line"
-            if action == "Hide":
-                # Migrate to output section instead of showing in merge table
-                if source:
-                    migrated_hides[source] = True
-                continue
-            if fmt not in ("", "String", "Amount"):
-                fmt = ""
-            self.merge_tree.insert("", tk.END, values=(action, source, target, fmt))
+            parts  = [p.strip() for p in entry.split(';')]
+            path   = parts[0] if len(parts) > 0 else ""
+            sign   = parts[1] if len(parts) > 1 else "Positive"
+            rename = parts[2] if len(parts) > 2 else ""
+            # Migrate old Yes/No format
+            if sign in ("Yes", "No"):
+                sign = "Positive"
+                rename = ""
+            if sign not in ("Positive", "Negative"):
+                sign = "Positive"
+            self.tags_tree.insert("", tk.END, values=(path, sign, rename))
 
         # ── output ──
+        # Migrate any old Hide rules from legacy merge_columns to output
+        merge_rules = self.settings_manager.get_merge_columns(config_name)
+        migrated_hides = {}
+        for rule in merge_rules:
+            parts = [p.strip() for p in rule.split(';')]
+            action = parts[0] if parts else ""
+            source = parts[1] if len(parts) > 1 else ""
+            if action == "Hide" and source:
+                migrated_hides[source] = True
+
         saved = self.pending_output.get(config_name,
                 self.settings_manager.get_output_columns(config_name))
-        saved_map = {}   # (tag, col) -> (rename, hide, order)
+        saved_map = {}
         for row in saved:
             parts = [p.strip() for p in row.split(';')]
-            # Backward compat:
-            #   3-part: col; hide; order          (oldest — no tag, no rename)
-            #   4-part: tag; col; hide; order     (old — no rename)
-            #   5-part: tag; col; rename; hide; order  (current)
             if len(parts) == 3:
                 tag_s, col, rename, hide, order = '', parts[0], '', parts[1], parts[2]
             elif len(parts) == 4:
@@ -558,20 +495,16 @@ class ConfigsDialog(tk.Toplevel):
             if col:
                 saved_map[(tag_s, col)] = (rename, hide, order)
 
-        # Migrate any Hide rules from merge (no tag — applies to all)
         for col in migrated_hides:
             key = ('', col)
             if key not in saved_map:
                 saved_map[key] = ('', 'Yes', '')
 
-        # Combine current parse columns with saved-only extras
-        current_pairs = self._get_current_columns()   # list of (base_tag, col)
+        current_pairs = self._get_current_columns()
         all_pairs = list(current_pairs)
         for key in saved_map:
             if key not in all_pairs:
                 all_pairs.append(key)
-
-        # Sort: by tag, then column name
         all_pairs.sort(key=lambda p: (p[0], p[1]))
 
         for item in self.output_tree.get_children():
@@ -587,75 +520,11 @@ class ConfigsDialog(tk.Toplevel):
             self._buffer_current_edits()
         for config_name, tags in self.pending_tags.items():
             self.settings_manager.update_config(config_name, tags)
-        for config_name, merge in self.pending_merge.items():
-            self.settings_manager.update_merge_columns(config_name, merge)
+            # Clear legacy merge data so it doesn't resurface
+            self.settings_manager.update_merge_columns(config_name, [])
         for config_name, output in self.pending_output.items():
             self.settings_manager.update_output_columns(config_name, output)
         self.destroy()
-
-    # ── merge table editing ───────────────────────────────────────────────────
-
-    def on_merge_cell_edit(self, event):
-        region = self.merge_tree.identify("region", event.x, event.y)
-        if region != "cell":
-            return
-        col_id = self.merge_tree.identify_column(event.x)
-        item   = self.merge_tree.identify_row(event.y)
-        if not item:
-            return
-        col_idx  = int(col_id[1:]) - 1
-        col_names = ("action", "source", "target", "format")
-        col_name  = col_names[col_idx]
-        bbox = self.merge_tree.bbox(item, col_id)
-        if not bbox:
-            return
-        x, y, w, h = bbox
-        current = self.merge_tree.set(item, col_name)
-        if col_name == "action":
-            dropdown_values = ["New Line", "Merge"]   # Hide removed
-            editor = ttk.Combobox(self.merge_tree, values=dropdown_values, state="readonly")
-            editor.set(current if current in dropdown_values else dropdown_values[0])
-            editor.place(x=x, y=y, width=w, height=h)
-            editor.focus()
-            def commit_combo(event=None, _editor=editor, _item=item, _col=col_name):
-                self.merge_tree.set(_item, _col, _editor.get())
-                _editor.destroy()
-            editor.bind("<<ComboboxSelected>>", commit_combo)
-            editor.bind("<FocusOut>", lambda e, _editor=editor: _editor.destroy())
-        elif col_name == "format":
-            dropdown_values = ["", "String", "Amount"]
-            editor = ttk.Combobox(self.merge_tree, values=dropdown_values, state="readonly")
-            editor.set(current if current in dropdown_values else "")
-            editor.place(x=x, y=y, width=w, height=h)
-            editor.focus()
-            def commit_fmt(event=None, _editor=editor, _item=item, _col=col_name):
-                self.merge_tree.set(_item, _col, _editor.get())
-                _editor.destroy()
-            editor.bind("<<ComboboxSelected>>", commit_fmt)
-            editor.bind("<FocusOut>", lambda e, _editor=editor: _editor.destroy())
-        else:
-            editor = tk.Entry(self.merge_tree)
-            editor.insert(0, current)
-            editor.select_range(0, tk.END)
-            editor.place(x=x, y=y, width=w, height=h)
-            editor.focus()
-            def commit_entry(event=None, _editor=editor, _item=item, _col=col_name):
-                self.merge_tree.set(_item, _col, _editor.get())
-                _editor.destroy()
-            def cancel_entry(event=None, _editor=editor):
-                _editor.destroy()
-            editor.bind("<Return>",   commit_entry)
-            editor.bind("<FocusOut>", commit_entry)
-            editor.bind("<Escape>",   cancel_entry)
-
-    def add_merge_row(self):
-        item = self.merge_tree.insert("", tk.END, values=("New Line", "", "", ""))
-        self.merge_tree.selection_set(item)
-        self.merge_tree.see(item)
-
-    def delete_merge_row(self):
-        for item in self.merge_tree.selection():
-            self.merge_tree.delete(item)
 
     # ── tags table editing ────────────────────────────────────────────────────
 
@@ -668,22 +537,22 @@ class ConfigsDialog(tk.Toplevel):
         if not item:
             return
         col_idx  = int(col_id[1:]) - 1
-        col_names = ("tag", "split")
+        col_names = ("path", "sign", "rename")
         col_name  = col_names[col_idx]
         bbox = self.tags_tree.bbox(item, col_id)
         if not bbox:
             return
         x, y, w, h = bbox
         current = self.tags_tree.set(item, col_name)
-        if col_name == "split":
-            editor = ttk.Combobox(self.tags_tree, values=["Yes", "No"], state="readonly")
-            editor.set(current if current in ("Yes", "No") else "Yes")
+        if col_name == "sign":
+            editor = ttk.Combobox(self.tags_tree, values=["Positive", "Negative"], state="readonly")
+            editor.set(current if current in ("Positive", "Negative") else "Positive")
             editor.place(x=x, y=y, width=w, height=h)
             editor.focus()
-            def commit_tags_combo(event=None, _editor=editor, _item=item, _col=col_name):
+            def commit_combo(event=None, _editor=editor, _item=item, _col=col_name):
                 self.tags_tree.set(_item, _col, _editor.get())
                 _editor.destroy()
-            editor.bind("<<ComboboxSelected>>", commit_tags_combo)
+            editor.bind("<<ComboboxSelected>>", commit_combo)
             editor.bind("<FocusOut>", lambda e, _editor=editor: _editor.destroy())
         else:
             editor = tk.Entry(self.tags_tree)
@@ -691,17 +560,17 @@ class ConfigsDialog(tk.Toplevel):
             editor.select_range(0, tk.END)
             editor.place(x=x, y=y, width=w, height=h)
             editor.focus()
-            def commit_tags_entry(event=None, _editor=editor, _item=item, _col=col_name):
+            def commit_entry(event=None, _editor=editor, _item=item, _col=col_name):
                 self.tags_tree.set(_item, _col, _editor.get())
                 _editor.destroy()
-            def cancel_tags_entry(event=None, _editor=editor):
+            def cancel_entry(event=None, _editor=editor):
                 _editor.destroy()
-            editor.bind("<Return>",   commit_tags_entry)
-            editor.bind("<FocusOut>", commit_tags_entry)
-            editor.bind("<Escape>",   cancel_tags_entry)
+            editor.bind("<Return>",   commit_entry)
+            editor.bind("<FocusOut>", commit_entry)
+            editor.bind("<Escape>",   cancel_entry)
 
     def add_tags_row(self):
-        item = self.tags_tree.insert("", tk.END, values=("", "Yes"))
+        item = self.tags_tree.insert("", tk.END, values=("", "Positive", ""))
         self.tags_tree.selection_set(item)
         self.tags_tree.see(item)
 
@@ -735,7 +604,7 @@ class ConfigsDialog(tk.Toplevel):
         col_names = ("tag", "column", "rename", "hide", "order")
         col_name  = col_names[col_idx]
         if col_name == "hide":
-            return   # handled by single-click toggle
+            return
         bbox = self.output_tree.bbox(item, col_id)
         if not bbox:
             return
@@ -749,7 +618,7 @@ class ConfigsDialog(tk.Toplevel):
         def commit(event=None, _editor=editor, _item=item, _col=col_name):
             val = _editor.get()
             if _col == "order" and val and not val.isdigit():
-                val = ""   # reject non-integer input
+                val = ""
             self.output_tree.set(_item, _col, val)
             _editor.destroy()
         def cancel(event=None, _editor=editor):
@@ -767,7 +636,7 @@ class ConfigsDialog(tk.Toplevel):
         for item in self.output_tree.selection():
             self.output_tree.delete(item)
 
-    # ── config add / delete ───────────────────────────────────────────────────
+    # ── config add / delete / reset ───────────────────────────────────────────
 
     def add_config(self):
         dialog = tk.Toplevel(self)
@@ -822,27 +691,75 @@ class ConfigsDialog(tk.Toplevel):
             return
         name = self.config_listbox.get(selection[0])
         if messagebox.askyesno("Confirm", f"Delete config '{name}'?"):
-            for tree in (self.tags_tree, self.merge_tree, self.output_tree):
+            for tree in (self.tags_tree, self.output_tree):
                 for item in tree.get_children():
                     tree.delete(item)
             self.pending_tags.pop(name, None)
-            self.pending_merge.pop(name, None)
             self.pending_output.pop(name, None)
             self.current_config = None
             self.settings_manager.delete_config(name)
             self.refresh_config_list()
 
-    # ── info dialog ───────────────────────────────────────────────────────────
+    def reset_config(self):
+        if not self.current_config:
+            messagebox.showwarning("Warning", "Please select a config to reset.")
+            return
+        if messagebox.askyesno("Confirm",
+                f"Reset '{self.current_config}' to default tags?\n\n"
+                "This will replace all value-tag entries with the defaults."):
+            self.settings_manager.reset_config(self.current_config)
+            self.pending_tags.pop(self.current_config, None)
+            self.pending_output.pop(self.current_config, None)
+            self._load_config(self.current_config)
 
+    # ── info dialog ───────────────────────────────────────────────────────────
 
     def update_parent_dropdown(self):
         self.master.update_config_dropdown()
 
 
+class ProgressDialog(tk.Toplevel):
+    """Modal-ish progress popup shown while parsing."""
+    def __init__(self, parent, n_files):
+        super().__init__(parent)
+        self.title("Parsing…")
+        self.resizable(False, False)
+        self.transient(parent)
+        # No grab_set — causes hangs on macOS when used with threads
+
+        self._lbl = tk.Label(self, text=f"Parsing {n_files} file(s)…",
+                             padx=24, pady=12, font=("TkDefaultFont", 10))
+        self._lbl.pack()
+
+        self._bar = ttk.Progressbar(self, mode='indeterminate', length=240)
+        self._bar.pack(padx=24, pady=(0, 18))
+        self._bar.start(12)
+
+        # Centre on parent
+        self.update_idletasks()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - w) // 2}+{py + (ph - h) // 2}")
+
+        if sys.platform == "darwin":
+            self.lift()
+            self.attributes("-topmost", True)
+        self.update()
+
+    def set_message(self, msg):
+        """Update label text — must be called from the main thread."""
+        self._lbl.config(text=msg)
+
+    def close(self):
+        self._bar.stop()
+        self.destroy()
+
+
 class XMLParserApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        
+
         self.settings_manager = SettingsManager()
         self.settings_manager.validate_window_position()
 
@@ -854,25 +771,23 @@ class XMLParserApp(tk.Tk):
         self.create_menu()
         self.create_widgets()
         self.update_config_dropdown()
-        
-        # Bind window close to save settings
+
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.bind("<Configure>", self.on_resize)
-        
-        # macOS-specific: Ensure window appears when built with --windowed
+
         if sys.platform == "darwin":
             try:
                 self.lift()
                 self.after(100, self.force_focus)
             except Exception as e:
                 print(f"Window activation error: {e}")
-    
+
     def force_focus(self):
         try:
             self.focus_force()
         except Exception as e:
             print(f"Focus error: {e}")
-    
+
     def create_menu(self):
         menubar = tk.Menu(self)
         self.config(menu=menubar)
@@ -906,7 +821,7 @@ class XMLParserApp(tk.Tk):
         dlg.transient(self)
         dlg.grab_set()
         dlg.resizable(True, True)
-        dlg.geometry("620x520")
+        dlg.geometry("620x540")
 
         text_frame = tk.Frame(dlg)
         text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 5))
@@ -921,73 +836,59 @@ class XMLParserApp(tk.Tk):
         vsb.config(command=txt.yview)
 
         content = (
-            "TAGS TO EXTRACT\n"
-            "───────────────\n"
-            "Each row specifies one XML tag to search for in the loaded file.\n"
+            "VALUE-TAGS TO EXTRACT\n"
+            "─────────────────────\n"
+            "Each row specifies one XML amount field to extract.\n"
+            "Each occurrence of that field becomes one row in the output.\n"
+            "All surrounding XML context (parent fields, sibling fields)\n"
+            "is collected automatically.\n"
             "\n"
-            "  Tag         — The XML element name to look for (e.g. Ntry).\n"
-            "  Split Tabs  — What to do when multiple elements with this\n"
-            "                tag are found in the file:\n"
+            "  Path    — XML path to the amount element.\n"
+            "            Simple: RmtdAmt\n"
+            "            Qualified: Strd/RfrdDocAmt/RmtdAmt\n"
             "\n"
-            "    Yes  Each instance gets its own tab (Tag 1, Tag 2, …).\n"
-            "    No   All instances are combined into a single tab.\n"
+            "  Sign    — Positive: value kept as-is.\n"
+            "            Negative: value multiplied by -1.\n"
+            "\n"
+            "  Rename  — Display name for the amount column and the tab.\n"
+            "            Rows with the same Rename appear on the same tab.\n"
+            "            Leave blank to use the Path as the name.\n"
+            "\n"
+            "Defaults:\n"
+            "  RmtdAmt; Positive; AmountDebit\n"
+            "  CdtNoteAmt; Negative; AmountCredit\n"
             "\n"
             "\n"
-            "RENAME AND MERGE COLUMNS\n"
-            "────────────────────────\n"
-            "Maps raw XML paths to friendlier column names and controls how\n"
-            "multiple source fields are combined.\n"
+            "CONTROL SUMS  (right panel)\n"
+            "───────────────────────────\n"
+            "After parsing, the right panel shows:\n"
             "\n"
-            "  Action        — How to combine values when multiple source\n"
-            "                  columns map to the same target:\n"
+            "  Parsed sums   — Sum of all amount values per tab.\n"
+            "                  Negative entries are included with their sign.\n"
             "\n"
-            "    New Line  Each unique value gets its own row so no data\n"
-            "              is lost. If one row has values in two sources,\n"
-            "              two output rows are produced.\n"
+            "  Document sums — <Sum> values found in the XML file itself\n"
+            "                  (e.g. TtlNtries/Sum in CAMT files).\n"
             "\n"
-            "    Merge     All source values are joined into one cell,\n"
-            "              separated by a space.\n"
-            "              Example: 'Main St' + '12' → 'Main St 12'\n"
-            "\n"
-            "  Source Column — The raw XML path of the source column\n"
-            "                  (e.g. NtryDtls/TxDtls/RmtInf/Strd/Nb).\n"
-            "  Target Name   — The display name for the merged output column.\n"
-            "  Format        — How the column is typed in Excel export:\n"
-            "\n"
-            "    (blank)   Default — @Value columns are numeric, others text.\n"
-            "    String    Force the column to text even if it looks numeric.\n"
-            "    Amount    Force the column to numeric.\n"
-            "\n"
-            "Notes:\n"
-            "• Multiple rows sharing the same Target Name funnel several\n"
-            "  source columns into one output column.\n"
-            "• Identical values across sources are deduplicated (shown once).\n"
-            "• Double-click any cell to edit it.\n"
+            "  OK / MISMATCH — The absolute sum of all parsed amounts is\n"
+            "                  compared to the document total. A MISMATCH\n"
+            "                  means amounts were lost or duplicated.\n"
             "\n"
             "\n"
             "OUTPUT\n"
             "──────\n"
-            "Fine-tunes which columns appear in the final output, what they\n"
-            "are called, and in what order they appear. The list is\n"
-            "pre-populated with all columns from the most recent parse.\n"
+            "Fine-tunes which context columns appear in the output, what\n"
+            "they are called, and in what order they appear.\n"
             "\n"
-            "  Tag         — Limit this rule to a specific tag-tab.\n"
+            "  Tag         — Limit this rule to a specific tab name.\n"
             "                Leave blank to apply to all tabs.\n"
-            "  Column Name — The column as it comes out of parsing/merging.\n"
-            "  Rename to   — Optional. If filled in, the column header in\n"
-            "                the output is replaced with this name.\n"
-            "                Leave blank to keep the original name.\n"
+            "  Column Name — The column as it comes out of parsing.\n"
+            "  Rename to   — Optional. Replace the column header.\n"
             "  Hide        — Single-click to toggle Yes/No.\n"
-            "                Yes removes the column from all output.\n"
-            "                A warning appears in the toolbar if a value\n"
-            "                (Amount) column is hidden.\n"
-            "  Order       — Integer. Columns with an order number are\n"
-            "                placed first, sorted ascending. Columns without\n"
-            "                a number follow in their default order.\n"
+            "                Yes removes the column from output.\n"
+            "  Order       — Integer. Ordered columns come first.\n"
             "\n"
-            "Only rows where Hide = Yes, Order, or Rename to are set are\n"
-            "saved. Display-only rows (nothing configured) are not persisted\n"
-            "but reappear automatically the next time a file is parsed.\n"
+            "Only rows where Hide = Yes, Order, or Rename to are set\n"
+            "are saved. Others reappear automatically on next parse.\n"
         )
 
         txt.insert("1.0", content)
@@ -1020,7 +921,6 @@ class XMLParserApp(tk.Tk):
 
         tk.Button(dlg, text="Close", command=dlg.destroy, width=10).pack(pady=(4, 16))
 
-        # Centre over main window
         self.update_idletasks()
         dlg.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() - dlg.winfo_width()) // 2
@@ -1032,84 +932,96 @@ class XMLParserApp(tk.Tk):
         self.settings_manager.save()
 
     def open_program_folder(self):
-        # Open the directory where settings are stored
         if getattr(sys, 'frozen', False):
-            # Running as PyInstaller bundle
             if sys.platform == "win32":
                 folder = os.path.join(os.environ['APPDATA'], 'XMLParser')
             else:
                 folder = os.path.join(os.path.expanduser('~'), '.XMLParser')
         else:
-            # Running as script - open current directory
             folder = os.getcwd()
-        
-        if sys.platform == "darwin":  # macOS
+
+        if sys.platform == "darwin":
             subprocess.Popen(["open", folder])
-        elif sys.platform == "win32":  # Windows
+        elif sys.platform == "win32":
             subprocess.Popen(["explorer", folder])
-        elif sys.platform.startswith("linux"):  # Linux
+        elif sys.platform.startswith("linux"):
             subprocess.Popen(["xdg-open", folder])
         else:
-            # Fallback for other platforms
             import webbrowser
             webbrowser.open(f"file://{folder}")
-    
+
     def create_widgets(self):
-        # Main container with 20/80 split
         self.upper_frame = tk.Frame(self)
         self.upper_frame.pack(fill=tk.X)
 
         self.lower_frame = tk.Frame(self)
         self.lower_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Upper frame contents (left-aligned)
         button_frame = tk.Frame(self.upper_frame)
         button_frame.pack(pady=5, padx=10, anchor=tk.W)
-        
+
         self.open_button = make_btn(button_frame, text="Open", command=self.open_file,
                                     bg="#4A90D9", fg="white", activebackground="#357ABD", activeforeground="white")
         self.open_button.pack(side=tk.LEFT, padx=10)
 
-        # Config dropdown
         self.config_var = tk.StringVar(self)
         self.config_dropdown = ttk.Combobox(button_frame, textvariable=self.config_var, state="readonly", width=30)
         self.config_dropdown.pack(side=tk.LEFT, padx=10)
         self.config_dropdown.bind("<<ComboboxSelected>>", self.on_config_selected)
 
-        # Export CSV button
         self.export_button = make_btn(button_frame, text="Export CSV", command=self.export_csv, state="disabled",
                                       bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white",
                                       disabledforeground="black")
         self.export_button.pack(side=tk.LEFT, padx=10)
 
-        # Export Excel button
         self.export_excel_button = make_btn(button_frame, text="Export Excel", command=self.export_excel, state="disabled",
                                             bg="#27AE60", fg="white", activebackground="#1E8449", activeforeground="white",
                                             disabledforeground="black")
         self.export_excel_button.pack(side=tk.LEFT, padx=10)
 
-        # Status chip — shown after parsing (success or hidden-value warning)
-        # Outer frame acts as a 1 px coloured border
         self.status_border = tk.Frame(button_frame, bd=0)
         self.status_inner  = tk.Frame(self.status_border, bd=0)
         self.status_label  = tk.Label(self.status_inner, padx=10, pady=3,
                                       font=("TkDefaultFont", 9, "bold"))
         self.status_label.pack()
         self.status_inner.pack(padx=1, pady=1)
-        # Not packed yet — shown on demand
-        
-        # Notebook
+
+        # Control sum panel — packed RIGHT first so notebook fills the rest
+        self._ctrl_panel = tk.Frame(self.lower_frame, width=260, relief="groove", bd=1)
+        self._ctrl_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+        self._ctrl_panel.pack_propagate(False)
+
+        ctrl_header = tk.Label(self._ctrl_panel, text="Control Sums",
+                               font=("TkDefaultFont", 9, "bold"))
+        ctrl_header.pack(pady=(6, 2))
+
+        ctrl_scroll_frame = tk.Frame(self._ctrl_panel)
+        ctrl_scroll_frame.pack(fill=tk.BOTH, expand=True)
+        self._ctrl_canvas = tk.Canvas(ctrl_scroll_frame, highlightthickness=0)
+        ctrl_vsb = ttk.Scrollbar(ctrl_scroll_frame, orient="vertical",
+                                 command=self._ctrl_canvas.yview)
+        ctrl_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._ctrl_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._ctrl_canvas.configure(yscrollcommand=ctrl_vsb.set)
+
+        self._ctrl_inner = tk.Frame(self._ctrl_canvas)
+        self._ctrl_canvas_win = self._ctrl_canvas.create_window(
+            (0, 0), window=self._ctrl_inner, anchor="nw")
+        self._ctrl_inner.bind("<Configure>", lambda e: self._ctrl_canvas.configure(
+            scrollregion=self._ctrl_canvas.bbox("all")))
+        self._ctrl_canvas.bind("<Configure>", lambda e: self._ctrl_canvas.itemconfig(
+            self._ctrl_canvas_win, width=e.width))
+
+        tk.Label(self._ctrl_inner, text="Parse a file to see sums.",
+                 fg="gray", wraplength=230).pack(padx=8, pady=8)
+
+        # Notebook — LEFT, fills remaining space
         self.notebook = ttk.Notebook(self.lower_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.notebook.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.tab_data = []  # list of (tab_name, columns, rows, col_formats)
-    
+        self.tab_data = []
+
     def _initial_dir(self):
-        """Return the best starting directory for any file dialog.
-
-        Uses the stored last-directory when it still exists on disk;
-        falls back to the user's home directory otherwise.
-        """
         d = self.settings_manager.last_directory
         if d and os.path.isdir(d):
             return d
@@ -1126,10 +1038,10 @@ class XMLParserApp(tk.Tk):
             self.settings_manager.last_directory = os.path.dirname(file_paths[0])
             self.settings_manager.save()
             self.parse_and_display_xml(file_paths)
-    
+
     def update_config_dropdown(self):
         config_names = self.settings_manager.get_config_names()
-        
+
         if not config_names:
             self.config_dropdown["values"] = ["No configs"]
             self.config_var.set("No configs")
@@ -1139,53 +1051,269 @@ class XMLParserApp(tk.Tk):
             current = self.config_var.get()
             last_selected = self.settings_manager.last_selected_config
             self.config_dropdown["values"] = config_names
-            
+
             if current in config_names:
                 self.config_var.set(current)
             elif last_selected in config_names:
                 self.config_var.set(last_selected)
             else:
                 self.config_var.set(config_names[0])
-    
+
     def on_config_selected(self, event=None):
         selected = self.config_var.get()
         if selected != "No configs":
             self.settings_manager.last_selected_config = selected
             self.settings_manager.save()
         print(f"Selected config: {selected}")
-    
+
     def open_configs(self):
         ConfigsDialog(self, self.settings_manager, self.config_var.get())
-    
+
     def on_resize(self, event):
         if event.widget == self:
             self.settings_manager.window_width = self.winfo_width()
             self.settings_manager.window_height = self.winfo_height()
-    
+
     def on_close(self):
-        # Save final window position
         self.settings_manager.window_x = self.winfo_x()
         self.settings_manager.window_y = self.winfo_y()
         self.settings_manager.save()
         self.destroy()
-    
-    def find_record_info(self, elem):
-        """Return (record_tag, record_parent) for the first repeating child tag found, or (None, None)."""
+
+    # ── XML helpers ───────────────────────────────────────────────────────────
+
+    def strip_namespaces(self, elem):
+        """Recursively strip namespaces from XML element and its children."""
+        if '}' in elem.tag:
+            elem.tag = elem.tag.split('}')[-1]
+        attrs = {}
+        for key in list(elem.attrib.keys()):
+            if '}' in key:
+                new_key = key.split('}')[-1]
+                attrs[new_key] = elem.attrib[key]
+                del elem.attrib[key]
+        elem.attrib.update(attrs)
+        for child in elem:
+            self.strip_namespaces(child)
+        return elem
+
+    def get_leaf_nodes(self, elem, path="", leaves=None):
+        if leaves is None:
+            leaves = []
+        current_path = f"{path}/{elem.tag}" if path else elem.tag
+        text = elem.text.strip() if elem.text else ""
+        if len(elem) == 0 or text or elem.attrib:
+            leaves.append({
+                'path': current_path,
+                'tag': elem.tag,
+                'text': text,
+                'attributes': dict(elem.attrib)
+            })
+        for child in elem:
+            self.get_leaf_nodes(child, current_path, leaves)
+        return leaves
+
+    # ── new value-driven parser ───────────────────────────────────────────────
+
+    def _collect_sibling_leaves(self, elem, rel_path, row):
+        """Recursively collect leaf data from elem into row using rel_path as key."""
+        if len(elem) == 0:
+            text = elem.text.strip() if elem.text else ""
+            ccy = elem.attrib.get('Ccy', '')
+            if ccy and text:
+                text = f"{text} {ccy}"
+            elif ccy:
+                text = ccy
+            if text:
+                row[rel_path] = (row[rel_path] + " " + text) if row.get(rel_path) else text
+        else:
+            for child in elem:
+                self._collect_sibling_leaves(child, rel_path + "/" + child.tag, row)
+
+    def collect_value_rows(self, root, value_path_str, rename, parent_map):
+        """Find all occurrences of value_path_str and build one row per occurrence.
+
+        Each row contains the amount value plus all sibling context collected
+        by walking up the ancestor chain.
+        Returns (columns, rows, col_formats).
+        """
+        col_name = rename if rename else value_path_str
+
+        found = [e for e in root.findall('.//' + value_path_str)
+                 if e.text and e.text.strip()]
+        if not found:
+            return [], [], {}
+
+        rows = []
+        all_keys = set()
+
+        for val_elem in found:
+            row = {
+                col_name: val_elem.text.strip(),
+                col_name + "@Ccy": val_elem.attrib.get('Ccy', ''),
+            }
+
+            # Build set of ancestor ids so we skip the branch we came from
+            ancestor_ids = set()
+            cur = val_elem
+            while cur in parent_map:
+                ancestor_ids.add(id(cur))
+                cur = parent_map[cur]
+
+            # Walk up collecting siblings
+            current = val_elem
+            while current in parent_map:
+                parent = parent_map[current]
+                for child in parent:
+                    if child is not current:
+                        self._collect_sibling_leaves(child, child.tag, row)
+                current = parent
+
+            rows.append(row)
+            all_keys.update(row.keys())
+
+        # Column order: amount first, then Ccy, then everything else sorted
+        columns = [col_name, col_name + "@Ccy"]
+        for k in sorted(all_keys):
+            if k not in (col_name, col_name + "@Ccy"):
+                columns.append(k)
+
+        col_formats = {col_name: "Amount"}
+        return columns, rows, col_formats
+
+    def parse_with_value_tags(self, root, value_tag_entries, output_rules=None):
+        """Parse XML using value-tag entries of the form 'path; sign; rename'.
+
+        Returns list of (tab_name, columns, rows, col_formats).
+        """
+        entries = []
+        for entry in value_tag_entries:
+            parts = [p.strip() for p in entry.split(';')]
+            path   = parts[0] if len(parts) > 0 else ""
+            sign   = parts[1] if len(parts) > 1 else "Positive"
+            rename = parts[2] if len(parts) > 2 else ""
+            # Migrate old format
+            if sign in ("Yes", "No"):
+                sign = "Positive"
+                rename = ""
+            if sign not in ("Positive", "Negative"):
+                sign = "Positive"
+            tab = rename if rename else path
+            if path:
+                entries.append({'path': path, 'sign': sign, 'rename': rename, 'tab': tab})
+
+        if not entries:
+            return []
+
+        parent_map = {child: parent for parent in root.iter() for child in parent}
+
+        # Group by tab name (preserving insertion order)
+        groups = {}
+        for e in entries:
+            groups.setdefault(e['tab'], []).append(e)
+
+        tabs = []
+        for tab_name, group_entries in groups.items():
+            all_columns = []
+            all_rows = []
+            seen_cols = set()
+            col_formats = {}
+
+            for e in group_entries:
+                cols, rows, fmts = self.collect_value_rows(
+                    root, e['path'], e['rename'] if e['rename'] else e['path'], parent_map)
+                if not rows:
+                    continue
+
+                col_name = e['rename'] if e['rename'] else e['path']
+
+                if e['sign'] == 'Negative':
+                    for row in rows:
+                        raw = row.get(col_name, '')
+                        if raw:
+                            try:
+                                row[col_name] = str(-abs(float(raw.replace(',', '.'))))
+                            except (ValueError, TypeError):
+                                pass
+
+                for col in cols:
+                    if col not in seen_cols:
+                        all_columns.append(col)
+                        seen_cols.add(col)
+                col_formats.update(fmts)
+                all_rows.extend(rows)
+
+            if not all_rows:
+                continue
+
+            if output_rules:
+                all_columns, all_rows, col_formats = self.apply_output_columns(
+                    all_columns, all_rows, output_rules, tab_name, col_formats)
+
+            tabs.append((tab_name, all_columns, all_rows, col_formats))
+
+        return tabs
+
+    def apply_output_columns(self, columns, rows, output_rules, tag="", col_formats=None):
+        """Apply hide, reorder, and rename rules from the Output config section."""
+        if not output_rules:
+            return columns, rows, col_formats or {}
+        hide_cols  = set()
+        order_map  = {}
+        rename_map = {}
+        for rule in output_rules:
+            parts = [p.strip() for p in rule.split(';')]
+            if len(parts) == 3:
+                rule_tag, col, rename, hide, order = '', parts[0], '', parts[1], parts[2]
+            elif len(parts) == 4:
+                rule_tag, col, rename, hide, order = parts[0], parts[1], '', parts[2], parts[3]
+            elif len(parts) >= 5:
+                rule_tag, col, rename, hide, order = parts[0], parts[1], parts[2], parts[3], parts[4]
+            else:
+                continue
+            if not col:
+                continue
+            if rule_tag and rule_tag != tag:
+                continue
+            if hide == 'Yes':
+                hide_cols.add(col)
+            if order:
+                try:
+                    order_map[col] = int(order)
+                except ValueError:
+                    pass
+            if rename:
+                rename_map[col] = rename
+        if hide_cols:
+            fmts = col_formats or {}
+            if any(c.endswith('@Value') or fmts.get(c) == 'Amount' for c in hide_cols):
+                self._hidden_value_cols = True
+
+        new_columns = [col for col in columns if col not in hide_cols]
+        ordered   = sorted([c for c in new_columns if c in order_map], key=lambda c: order_map[c])
+        unordered = [c for c in new_columns if c not in order_map]
+        final_orig    = ordered + unordered
+        final_columns = [rename_map.get(c, c) for c in final_orig]
+        new_rows      = [{rename_map.get(col, col): row.get(col, '') for col in final_orig} for row in rows]
+        new_formats = {rename_map.get(c, c): fmt for c, fmt in (col_formats or {}).items()}
+        return final_columns, new_rows, new_formats
+
+    # ── no-config fallback: element-based parsing ─────────────────────────────
+
+    def _find_record_info(self, elem):
         child_tag_counts = Counter(child.tag for child in elem)
         for tag, count in child_tag_counts.items():
             if count > 1:
-                # Leaf-only repetitions are split field values, not record structures — skip them
                 if any(len(c) > 0 for c in elem if c.tag == tag):
                     return tag, elem
         for child in elem:
             if child_tag_counts[child.tag] == 1:
-                result_tag, result_parent = self.find_record_info(child)
+                result_tag, result_parent = self._find_record_info(child)
                 if result_tag is not None:
                     return result_tag, result_parent
         return None, None
 
-    def get_leaves_excluding_tag(self, elem, exclude_tag, path="", leaves=None):
-        """Collect nodes with data from elem, skipping all subtrees rooted at exclude_tag."""
+    def _get_leaves_excluding_tag(self, elem, exclude_tag, path="", leaves=None):
         if leaves is None:
             leaves = []
         current_path = f"{path}/{elem.tag}" if path else elem.tag
@@ -1195,35 +1323,27 @@ class XMLParserApp(tk.Tk):
         if len(elem) == 0 or text or elem.attrib:
             leaves.append({'path': current_path, 'tag': elem.tag, 'text': text, 'attributes': dict(elem.attrib)})
         for child in elem:
-            self.get_leaves_excluding_tag(child, exclude_tag, current_path, leaves)
+            self._get_leaves_excluding_tag(child, exclude_tag, current_path, leaves)
         return leaves
 
-    def collect_flat_records(self, elem, ancestor_leaves=None):
-        """Recursively descend to the deepest repeating level, accumulating ancestor context."""
+    def _collect_flat_records(self, elem, ancestor_leaves=None):
         if ancestor_leaves is None:
             ancestor_leaves = []
-
-        record_tag, record_parent = self.find_record_info(elem)
-
+        record_tag, record_parent = self._find_record_info(elem)
         if record_tag is None:
             return [ancestor_leaves + self.get_leaf_nodes(elem)]
-
-        parent_leaves = self.get_leaves_excluding_tag(elem, record_tag)
+        parent_leaves = self._get_leaves_excluding_tag(elem, record_tag)
         combined = ancestor_leaves + parent_leaves
-
         result = []
         for record_elem in record_parent.findall(record_tag):
-            result.extend(self.collect_flat_records(record_elem, combined))
+            result.extend(self._collect_flat_records(record_elem, combined))
         return result
 
     def element_to_rows(self, elem):
-        all_leaf_lists = self.collect_flat_records(elem)
-
+        all_leaf_lists = self._collect_flat_records(elem)
         if not all_leaf_lists:
             return [], []
-
         all_paths = sorted(set(leaf['path'] for leaves in all_leaf_lists for leaf in leaves))
-        # Detect amount columns from actual data: any element that carries a Ccy attribute.
         amount_columns = set()
         for leaves in all_leaf_lists:
             for leaf in leaves:
@@ -1236,7 +1356,6 @@ class XMLParserApp(tk.Tk):
                 columns.append(f"{col}@Ccy")
             else:
                 columns.append(col)
-
         rows = []
         for leaves in all_leaf_lists:
             row = {}
@@ -1260,298 +1379,206 @@ class XMLParserApp(tk.Tk):
                     elif path not in row:
                         row[path] = ""
             rows.append(row)
-
         return columns, rows
 
-    def apply_column_merges(self, columns, rows, merge_rules):
-        if not merge_rules:
-            return columns, rows, {}
+    # ── control sum helpers ───────────────────────────────────────────────────
 
-        hide_cols = set()
-        target_to_sources = {}
-        target_action_mode = {}
-        target_format = {}
-        for rule in merge_rules:
-            if ';' not in rule:
+    def _calc_parsed_sums(self):
+        sums = {}
+        for tab_name, columns, rows, col_formats in self.tab_data:
+            total = 0.0
+            for col in columns:
+                if col_formats.get(col) == "Amount" or col.endswith('@Value'):
+                    for row in rows:
+                        v = row.get(col, '')
+                        if v:
+                            try:
+                                total += float(str(v).replace(',', '.'))
+                            except (ValueError, TypeError):
+                                pass
+            sums[tab_name] = total
+        return sums
+
+    def _calc_raw_xml_sums(self, roots, value_tag_entries):
+        """Sum raw (unsigned) element values per tab, before sign application."""
+        raw = {}   # tab_name -> float (always positive)
+        for entry_str in value_tag_entries:
+            parts  = [p.strip() for p in entry_str.split(';')]
+            path   = parts[0] if parts else ""
+            sign   = parts[1] if len(parts) > 1 else "Positive"
+            rename = parts[2] if len(parts) > 2 else ""
+            if sign in ("Yes", "No"):
+                sign = "Positive"
+            tab = rename if rename else path
+            if not path:
                 continue
-            parts = rule.split(';', 3)
-            if len(parts) < 2:
-                continue
-            action = parts[0].strip()
-            source = parts[1].strip()
-            target = parts[2].strip() if len(parts) > 2 else ""
-            fmt = parts[3].strip() if len(parts) > 3 else ""
-            if action not in ("New Line", "Merge", "Hide"):
-                # Old format was Target; Source; Conflict — migrate transparently
-                if target in ("New Line", "Merge", "Hide"):
-                    action, target = target, action
-                else:
-                    action = "New Line"
-            if not source:
-                continue
-            if action == "Hide":
-                hide_cols.add(source)
-            else:
-                if not target:
+            for root in roots:
+                for elem in root.findall('.//' + path):
+                    if elem.text:
+                        try:
+                            raw[tab] = raw.get(tab, 0.0) + abs(float(elem.text.strip().replace(',', '.')))
+                        except (ValueError, TypeError):
+                            pass
+        return raw
+
+    def _extract_document_sums(self, roots):
+        results = []
+        for root in roots:
+            for elem in root.iter('Sum'):
+                text = elem.text.strip() if elem.text else ""
+                if not text:
                     continue
-                if target not in target_to_sources:
-                    target_to_sources[target] = []
-                    target_action_mode[target] = action
-                if source not in target_to_sources[target]:
-                    target_to_sources[target].append(source)
-                if fmt in ("String", "Amount"):
-                    target_format[target] = fmt
-
-        all_source_cols = {src for srcs in target_to_sources.values() for src in srcs}
-
-        # Build new column order: drop hidden cols, replace first source with target name.
-        new_columns = []
-        added_targets = set()
-        for col in columns:
-            if col in hide_cols:
-                continue
-            if col in all_source_cols:
-                target = next((t for t, srcs in target_to_sources.items() if col in srcs), None)
-                if target and target not in added_targets:
-                    added_targets.add(target)
-                    new_columns.append(target)
-            else:
-                new_columns.append(col)
-
-        new_rows = []
-        for row in rows:
-            target_values = {}
-            for target, sources in target_to_sources.items():
-                seen = []
-                for src in sources:
-                    v = row.get(src, "")
-                    if v and v not in seen:
-                        seen.append(v)
-                target_values[target] = seen
-
-            # Only "New Line" targets with multiple values drive row expansion.
-            new_line_multi = [t for t, vals in target_values.items()
-                              if len(vals) > 1 and target_action_mode.get(t) == "New Line"]
-            max_expand = max((len(target_values[t]) for t in new_line_multi), default=1)
-
-            for i in range(max_expand):
-                new_row = {}
-                for col in new_columns:
-                    if col in target_to_sources:
-                        vals = target_values[col]
-                        if target_action_mode.get(col) == "Merge":
-                            new_row[col] = " ".join(v for v in vals if v)
-                        else:
-                            new_row[col] = vals[i] if i < len(vals) else ""
-                    else:
-                        new_row[col] = row.get(col, "")
-                new_rows.append(new_row)
-
-        return new_columns, new_rows, target_format
-
-    def apply_output_columns(self, columns, rows, output_rules, tag="", col_formats=None):
-        """Apply hide, reorder, and rename rules from the Output config section for a given tag-tab.
-
-        Rules with an empty tag apply to all tabs; rules with a specific tag apply
-        only when tag matches.
-        Formats (backward-compatible):
-          3-part: "col; hide; order"               (oldest — no tag, no rename)
-          4-part: "tag; col; hide; order"           (old — no rename)
-          5-part: "tag; col; rename; hide; order"   (current)
-        col_formats is updated so renamed columns keep their format (Amount/String).
-        """
-        if not output_rules:
-            return columns, rows, col_formats or {}
-        hide_cols  = set()
-        order_map  = {}
-        rename_map = {}
-        for rule in output_rules:
-            parts = [p.strip() for p in rule.split(';')]
-            if len(parts) == 3:
-                rule_tag, col, rename, hide, order = '', parts[0], '', parts[1], parts[2]
-            elif len(parts) == 4:
-                rule_tag, col, rename, hide, order = parts[0], parts[1], '', parts[2], parts[3]
-            elif len(parts) >= 5:
-                rule_tag, col, rename, hide, order = parts[0], parts[1], parts[2], parts[3], parts[4]
-            else:
-                continue
-            if not col:
-                continue
-            # Apply if rule_tag is empty (global) or matches the current tab's tag
-            if rule_tag and rule_tag != tag:
-                continue
-            if hide == 'Yes':
-                hide_cols.add(col)
-            if order:
                 try:
-                    order_map[col] = int(order)
-                except ValueError:
-                    pass
-            if rename:
-                rename_map[col] = rename
-        # Flag if any hidden column is a value/amount column
-        if hide_cols:
-            fmts = col_formats or {}
-            if any(c.endswith('@Value') or fmts.get(c) == 'Amount' for c in hide_cols):
-                self._hidden_value_cols = True
+                    val = float(text.replace(',', '.'))
+                except (ValueError, TypeError):
+                    continue
+                # Build a readable label from the two nearest ancestors
+                parts = []
+                parent_map_local = {child: parent for parent in root.iter() for child in parent}
+                cur = elem
+                for _ in range(2):
+                    if cur in parent_map_local:
+                        cur = parent_map_local[cur]
+                        parts.insert(0, cur.tag)
+                label = "/".join(parts) + "/Sum" if parts else "Sum"
+                results.append((label, val))
+        return results
 
-        new_columns = [col for col in columns if col not in hide_cols]
-        ordered   = sorted([c for c in new_columns if c in order_map], key=lambda c: order_map[c])
-        unordered = [c for c in new_columns if c not in order_map]
-        final_orig    = ordered + unordered
-        final_columns = [rename_map.get(c, c) for c in final_orig]
-        new_rows      = [{rename_map.get(col, col): row.get(col, '') for col in final_orig} for row in rows]
-        # Remap col_formats so renamed columns retain their format type
-        new_formats = {rename_map.get(c, c): fmt for c, fmt in (col_formats or {}).items()}
-        return final_columns, new_rows, new_formats
+    def _update_control_panel(self, parsed_sums, raw_sums, doc_sums):
+        for child in self._ctrl_inner.winfo_children():
+            child.destroy()
 
-    def deduplicate_amount_values(self, columns, rows, entry_boundaries=None):
-        """Clear repeated @Value entries within each entry.
+        lbl_pad  = {"padx": 8, "pady": (6, 1), "anchor": "w"}
+        sub_pad  = {"padx": 16, "pady": 0}
 
-        entry_boundaries: set of row indices that start a new top-level entry.
-        last_values is reset at each boundary so amounts from one entry never
-        suppress the same amount in the next entry.
-        """
-        value_cols = {col for col in columns if col.endswith('@Value')}
-        if not rows or not value_cols:
-            return rows
-        last_values = {col: rows[0].get(col, "") for col in value_cols}
-        for i in range(1, len(rows)):
-            if entry_boundaries and i in entry_boundaries:
-                last_values = {col: rows[i].get(col, "") for col in value_cols}
-                continue
-            for col in value_cols:
-                curr = rows[i].get(col, "")
-                if curr == last_values[col]:
-                    rows[i][col] = ""
-                elif curr != "":
-                    last_values[col] = curr
-        return rows
+        # Per-tab before/after rows
+        for tab_name in parsed_sums:
+            tk.Label(self._ctrl_inner, text=tab_name,
+                     font=("TkDefaultFont", 9, "bold")).pack(**lbl_pad)
 
-    def _entry_row_boundaries(self, root):
-        """Return the set of row indices where each top-level repeating element
-        starts, so deduplicate_amount_values can reset between entries."""
-        record_tag, record_parent = self.find_record_info(root)
-        if not record_tag or record_parent is None:
-            return None
-        boundaries = set()
-        idx = 0
-        for entry_elem in record_parent.findall(record_tag):
-            boundaries.add(idx)
-            idx += len(self.collect_flat_records(entry_elem))
-        return boundaries
+            raw_val    = raw_sums.get(tab_name, 0.0)
+            parsed_val = parsed_sums[tab_name]
 
-    def parse_with_config(self, root, config_tags, merge_rules=None, output_rules=None):
-        # config_tags entries are "TagName; SplitTabs" strings
-        tag_entries = []
-        for entry in config_tags:
-            parts = [p.strip() for p in entry.split(';')]
-            tag = parts[0]
-            split = parts[1] if len(parts) > 1 else "Yes"
-            if split not in ("Yes", "No"):
-                split = "Yes"
-            if tag:
-                tag_entries.append((tag, split))
+            for label, value in (("In XML:", raw_val), ("Parsed:", parsed_val)):
+                row_f = tk.Frame(self._ctrl_inner)
+                row_f.pack(fill=tk.X, **sub_pad)
+                tk.Label(row_f, text=label, anchor="w", width=8,
+                         font=("TkDefaultFont", 9)).pack(side=tk.LEFT)
+                color = "#E74C3C" if value < 0 else "#1A5276"
+                tk.Label(row_f, text=f"{value:,.2f}", anchor="e",
+                         font=("TkDefaultFont", 9), fg=color).pack(side=tk.RIGHT)
 
-        tabs = []
-        for tag, split in tag_entries:
-            elements = root.findall(f".//{tag}")
-            if not elements:
-                continue
+        if doc_sums:
+            ttk.Separator(self._ctrl_inner, orient="horizontal").pack(fill=tk.X, padx=8, pady=6)
+            tk.Label(self._ctrl_inner, text="Document sums:",
+                     font=("TkDefaultFont", 9, "bold")).pack(**lbl_pad)
+            for label, val in doc_sums:
+                row_f = tk.Frame(self._ctrl_inner)
+                row_f.pack(fill=tk.X, padx=8, pady=1)
+                tk.Label(row_f, text=label + ":", anchor="w",
+                         font=("TkDefaultFont", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
+                tk.Label(row_f, text=f"{val:,.2f}", anchor="e",
+                         font=("TkDefaultFont", 9)).pack(side=tk.RIGHT)
 
-            if split == "No" or len(elements) == 1:
-                # Combine all instances into one tab, processing each element
-                # independently so deduplication never crosses entry boundaries.
-                all_columns, all_rows = [], []
-                seen_cols = set()
-                col_formats = {}
-                for elem in elements:
-                    columns, rows = self.element_to_rows(elem)
-                    columns, rows, elem_formats = self.apply_column_merges(columns, rows, merge_rules or [])
-                    rows = self.deduplicate_amount_values(columns, rows)
-                    for col in columns:
-                        if col not in seen_cols:
-                            all_columns.append(col)
-                            seen_cols.add(col)
-                    col_formats.update(elem_formats)
-                    all_rows.extend(rows)
-                if output_rules:
-                    all_columns, all_rows, col_formats = self.apply_output_columns(all_columns, all_rows, output_rules, tag, col_formats)
-                tabs.append((tag, all_columns, all_rows, col_formats))
-            else:
-                for i, elem in enumerate(elements):
-                    columns, rows = self.element_to_rows(elem)
-                    columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules or [])
-                    rows = self.deduplicate_amount_values(columns, rows)
-                    if output_rules:
-                        columns, rows, col_formats = self.apply_output_columns(columns, rows, output_rules, tag, col_formats)
-                    tabs.append((f"{tag} {i + 1}", columns, rows, col_formats))
+            ttk.Separator(self._ctrl_inner, orient="horizontal").pack(fill=tk.X, padx=8, pady=6)
 
-        return tabs
+            parsed_abs = sum(abs(v) for v in parsed_sums.values())
+            doc_total  = sum(v for _, v in doc_sums)
+            mismatch   = abs(parsed_abs - doc_total) > 0.005
 
-    def get_leaf_nodes(self, elem, path="", leaves=None):
-        if leaves is None:
-            leaves = []
+            chip_bg  = "#E74C3C" if mismatch else "#27AE60"
+            chip_txt = "MISMATCH" if mismatch else "OK"
+            chip_f = tk.Frame(self._ctrl_inner, bg=chip_bg)
+            chip_f.pack(padx=8, pady=4, anchor="w")
+            tk.Label(chip_f, text=chip_txt, bg=chip_bg, fg="white",
+                     font=("TkDefaultFont", 9, "bold"), padx=8, pady=3).pack()
 
-        current_path = f"{path}/{elem.tag}" if path else elem.tag
-        text = elem.text.strip() if elem.text else ""
+        self._ctrl_canvas.configure(scrollregion=self._ctrl_canvas.bbox("all"))
 
-        if len(elem) == 0 or text or elem.attrib:
-            leaves.append({
-                'path': current_path,
-                'tag': elem.tag,
-                'text': text,
-                'attributes': dict(elem.attrib)
-            })
-
-        for child in elem:
-            self.get_leaf_nodes(child, current_path, leaves)
-
-        return leaves
+    # ── main parse/display ────────────────────────────────────────────────────
 
     def parse_and_display_xml(self, file_paths):
         if isinstance(file_paths, str):
             file_paths = (file_paths,)
-        self._hidden_value_cols = False   # reset before each parse
-        try:
-            selected_config = self.config_var.get()
-            has_config = selected_config and selected_config != "No configs"
-            config_tags = self.settings_manager.get_config(selected_config) if has_config else []
-            merge_rules = self.settings_manager.get_merge_columns(selected_config) if has_config else []
-            output_rules = self.settings_manager.get_output_columns(selected_config) if has_config else []
 
-            merged = {}        # tab_name -> (columns, rows, col_formats)
-            split_counters = {}  # base_name -> running count across files
+        selected_config = self.config_var.get()
+        has_config      = selected_config and selected_config != "No configs"
+        config_tags     = self.settings_manager.get_config(selected_config) if has_config else []
+        output_rules    = self.settings_manager.get_output_columns(selected_config) if has_config else []
 
-            for file_path in file_paths:
-                tree = ET.parse(file_path)
-                root = tree.getroot()
-                root = self.strip_namespaces(root)
+        prog = ProgressDialog(self, len(file_paths))
+        result_box = [None]   # filled by worker thread
 
-                if config_tags:
-                    tabs = self.parse_with_config(root, config_tags, merge_rules, output_rules)
-                else:
-                    columns, rows = self.element_to_rows(root)
-                    columns, rows, col_formats = self.apply_column_merges(columns, rows, merge_rules)
-                    rows = self.deduplicate_amount_values(
-                        columns, rows, self._entry_row_boundaries(root))
-                    tabs = [("Sheet1", columns, rows, col_formats)] if rows else []
+        def worker():
+            try:
+                hidden = False
+                merged    = {}
+                all_roots = []
 
-                for tab_name, columns, rows, col_formats in tabs:
-                    parts = tab_name.rsplit(" ", 1)
-                    if len(parts) == 2 and parts[1].isdigit():
-                        # Numbered (split) tab — renumber sequentially across files
-                        base = parts[0]
-                        split_counters[base] = split_counters.get(base, 0) + 1
-                        merged[f"{base} {split_counters[base]}"] = (columns, rows, col_formats)
+                for i, file_path in enumerate(file_paths):
+                    self.after(0, lambda m=f"Parsing file {i+1} of {len(file_paths)}…":
+                               prog.set_message(m))
+                    tree = ET.parse(file_path)
+                    root = tree.getroot()
+                    root = self.strip_namespaces(root)
+                    all_roots.append(root)
+
+                    if config_tags:
+                        self._hidden_value_cols = False
+                        tabs = self.parse_with_value_tags(root, config_tags, output_rules)
+                        if self._hidden_value_cols:
+                            hidden = True
                     else:
-                        # Non-split tab — merge rows under the same tab name
-                        if tab_name in merged:
-                            merged[tab_name] = (merged[tab_name][0],
-                                                merged[tab_name][1] + rows,
-                                                merged[tab_name][2])
+                        columns, rows = self.element_to_rows(root)
+                        if output_rules:
+                            self._hidden_value_cols = False
+                            columns, rows, col_formats = self.apply_output_columns(
+                                columns, rows, output_rules, "Sheet1", {})
+                            if self._hidden_value_cols:
+                                hidden = True
                         else:
-                            merged[tab_name] = (columns, rows, col_formats)
+                            col_formats = {}
+                        tabs = [("Sheet1", columns, rows, col_formats)] if rows else []
+
+                    for tab_name, columns, rows, col_formats in tabs:
+                        parts = tab_name.rsplit(" ", 1)
+                        if len(parts) == 2 and parts[1].isdigit():
+                            base     = parts[0]
+                            existing = sum(1 for k in merged
+                                          if k.startswith(base + " ") and k[len(base)+1:].isdigit())
+                            merged[f"{base} {existing + 1}"] = (columns, rows, col_formats)
+                        else:
+                            if tab_name in merged:
+                                prev_cols, prev_rows, prev_fmts = merged[tab_name]
+                                seen = set(prev_cols)
+                                merged_cols = list(prev_cols)
+                                for col in columns:
+                                    if col not in seen:
+                                        merged_cols.append(col)
+                                        seen.add(col)
+                                merged_fmts = dict(prev_fmts)
+                                merged_fmts.update(col_formats)
+                                merged[tab_name] = (merged_cols, prev_rows + rows, merged_fmts)
+                            else:
+                                merged[tab_name] = (columns, rows, col_formats)
+
+                result_box[0] = ('ok', merged, all_roots, hidden)
+            except Exception as exc:
+                import traceback as _tb
+                result_box[0] = ('error', exc, _tb.format_exc())
+            self.after(0, on_done)
+
+        def on_done():
+            prog.close()
+            kind = result_box[0][0]
+            if kind == 'error':
+                _, exc, tb = result_box[0]
+                print(tb)
+                messagebox.showerror("Error", f"Failed to parse XML: {exc}")
+                return
+
+            _, merged, all_roots, hidden = result_box[0]
+            self._hidden_value_cols = hidden
 
             if not merged:
                 messagebox.showwarning("Warning", "No data found in selected file(s).")
@@ -1562,8 +1589,7 @@ class XMLParserApp(tk.Tk):
             self.export_button.config(state="normal")
             self.export_excel_button.config(state="normal")
 
-            # Update and show the status chip
-            if getattr(self, '_hidden_value_cols', False):
+            if hidden:
                 self.status_border.config(bg="#E67E22")
                 self.status_inner.config(bg="#FEF0E7")
                 self.status_label.config(text="⚠ Value columns hidden",
@@ -1575,32 +1601,13 @@ class XMLParserApp(tk.Tk):
                                          fg="#1E8449", bg="#EAF7EE")
             self.status_border.pack(side=tk.LEFT, padx=(10, 0))
 
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            messagebox.showerror("Error", f"Failed to parse XML: {str(e)}")
-    
-    def strip_namespaces(self, elem):
-        """Recursively strip namespaces from XML element and its children"""
-        # Fix tag
-        if '}' in elem.tag:
-            elem.tag = elem.tag.split('}')[-1]
-        
-        # Fix attributes
-        attrs = {}
-        for key in list(elem.attrib.keys()):
-            if '}' in key:
-                new_key = key.split('}')[-1]
-                attrs[new_key] = elem.attrib[key]
-                del elem.attrib[key]
-        elem.attrib.update(attrs)
-        
-        # Recurse
-        for child in elem:
-            self.strip_namespaces(child)
-        
-        return elem
-    
+            parsed_sums = self._calc_parsed_sums()
+            raw_sums    = self._calc_raw_xml_sums(all_roots, config_tags)
+            doc_sums    = self._extract_document_sums(all_roots)
+            self._update_control_panel(parsed_sums, raw_sums, doc_sums)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def display_tabs(self, tabs):
         """Replace all notebook tabs with freshly built treeviews."""
         for tab_id in self.notebook.tabs():
@@ -1635,14 +1642,12 @@ class XMLParserApp(tk.Tk):
             for row in rows[:1000]:
                 tree.insert("", tk.END, values=[row.get(col, "") for col in columns])
 
-            # Single click on a cell → read-only overlay for text selection / copy
             tree.bind("<ButtonRelease-1>", lambda e, t=tree: self._open_cell_overlay(e, t))
 
             self.notebook.add(frame, text=tab_name)
             self.tab_data.append((tab_name, columns, rows, col_formats))
 
     def _dismiss_cell_overlay(self):
-        """Destroy any active cell overlay."""
         overlay = getattr(self, '_cell_overlay', None)
         if overlay:
             try:
@@ -1675,13 +1680,11 @@ class XMLParserApp(tk.Tk):
         overlay.configure(state="readonly")
         overlay.place(x=x, y=y, width=w, height=h)
         overlay.focus_set()
-        # Pre-select all so a single Ctrl+C copies everything immediately
         overlay.after(10, lambda: overlay.select_range(0, tk.END))
 
         overlay.bind("<Escape>",    lambda e: self._dismiss_cell_overlay())
         overlay.bind("<FocusOut>",  lambda e: self._dismiss_cell_overlay())
         overlay.bind("<Return>",    lambda e: self._dismiss_cell_overlay())
-        # Ctrl/Cmd+A selects all within the overlay
         overlay.bind("<Control-a>", lambda e: overlay.select_range(0, tk.END))
         overlay.bind("<Command-a>", lambda e: overlay.select_range(0, tk.END))
         self._cell_overlay = overlay
@@ -1800,10 +1803,9 @@ class XMLParserApp(tk.Tk):
                                     try:
                                         return f"{float(s):.2f}".replace(".", ",")
                                     except (ValueError, TypeError):
-                                        return str(v)   # preserve non-numeric as-is
+                                        return str(v)
                                 df[col] = df[col].fillna("").apply(_to_swedish)
                             else:
-                                # Convert parseable values to float; keep others as-is
                                 def _safe_numeric(v):
                                     s = str(v).strip()
                                     if not s:
@@ -1829,8 +1831,7 @@ if __name__ == "__main__":
         import traceback
         import os
         from datetime import datetime
-        
-        # Log error to file
+
         error_log = os.path.join(os.getcwd(), f"xmlparser_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
         with open(error_log, 'w') as f:
             f.write(f"XMLParser Error Log - {datetime.now()}\n")
@@ -1838,11 +1839,10 @@ if __name__ == "__main__":
             f.write(f"Error: {e}\n\n")
             f.write("Traceback:\n")
             traceback.print_exc(file=f)
-        
-        # Show error in message box if possible
+
         try:
             from tkinter import messagebox
-            messagebox.showerror("XMLParser Error", 
+            messagebox.showerror("XMLParser Error",
                 f"An error occurred and has been logged to:\n{error_log}\n\nError: {str(e)}")
         except:
             pass
