@@ -16,8 +16,9 @@ import pandas as pd
 GITHUB_URL = "https://github.com/opheophe/XMLParser"
 
 DEFAULT_VALUE_TAGS = [
-    "RmtdAmt; Positive; AmountDebit",
-    "CdtNoteAmt; Negative; AmountCredit",
+    "RmtdAmt; Positive; Amount; NtryDtls",
+    "CdtNoteAmt; Negative; Amount; NtryDtls",
+    "Sum; Positive; Total; TxsSummry",
 ]
 
 def _get_version():
@@ -318,14 +319,16 @@ class ConfigsDialog(tk.Toplevel):
         tags_table_frame = tk.Frame(tags_outer)
         tags_table_frame.pack(fill=tk.X)
         self.tags_tree = ttk.Treeview(tags_table_frame,
-                                      columns=("path", "sign", "rename"),
+                                      columns=("path", "sign", "rename", "highest"),
                                       show="headings", height=6)
-        self.tags_tree.heading("path",   text="Path")
-        self.tags_tree.heading("sign",   text="Sign")
-        self.tags_tree.heading("rename", text="Rename")
-        self.tags_tree.column("path",   width=260, minwidth=100, stretch=True)
-        self.tags_tree.column("sign",   width=90,  minwidth=70,  stretch=False)
-        self.tags_tree.column("rename", width=130, minwidth=70,  stretch=False)
+        self.tags_tree.heading("path",    text="Path")
+        self.tags_tree.heading("sign",    text="Sign")
+        self.tags_tree.heading("rename",  text="Rename")
+        self.tags_tree.heading("highest", text="Highest level")
+        self.tags_tree.column("path",    width=190, minwidth=80,  stretch=True)
+        self.tags_tree.column("sign",    width=85,  minwidth=70,  stretch=False)
+        self.tags_tree.column("rename",  width=100, minwidth=60,  stretch=False)
+        self.tags_tree.column("highest", width=95,  minwidth=60,  stretch=False)
         tags_vsb = ttk.Scrollbar(tags_table_frame, orient="vertical",
                                  command=self.tags_tree.yview)
         self.tags_tree.configure(yscrollcommand=tags_vsb.set)
@@ -413,12 +416,13 @@ class ConfigsDialog(tk.Toplevel):
     def _read_ui(self):
         tags = []
         for item in self.tags_tree.get_children():
-            vals   = self.tags_tree.item(item, "values")
-            path   = vals[0].strip() if len(vals) > 0 else ""
-            sign   = vals[1].strip() if len(vals) > 1 else "Positive"
-            rename = vals[2].strip() if len(vals) > 2 else ""
+            vals    = self.tags_tree.item(item, "values")
+            path    = vals[0].strip() if len(vals) > 0 else ""
+            sign    = vals[1].strip() if len(vals) > 1 else "Positive"
+            rename  = vals[2].strip() if len(vals) > 2 else ""
+            highest = vals[3].strip() if len(vals) > 3 else ""
             if path:
-                tags.append(f"{path}; {sign}; {rename}")
+                tags.append(f"{path}; {sign}; {rename}; {highest}")
         return tags
 
     def _read_output_ui(self):
@@ -456,17 +460,19 @@ class ConfigsDialog(tk.Toplevel):
         for item in self.tags_tree.get_children():
             self.tags_tree.delete(item)
         for entry in tags:
-            parts  = [p.strip() for p in entry.split(';')]
-            path   = parts[0] if len(parts) > 0 else ""
-            sign   = parts[1] if len(parts) > 1 else "Positive"
-            rename = parts[2] if len(parts) > 2 else ""
+            parts   = [p.strip() for p in entry.split(';')]
+            path    = parts[0] if len(parts) > 0 else ""
+            sign    = parts[1] if len(parts) > 1 else "Positive"
+            rename  = parts[2] if len(parts) > 2 else ""
+            highest = parts[3] if len(parts) > 3 else ""
             # Migrate old Yes/No format
             if sign in ("Yes", "No"):
                 sign = "Positive"
                 rename = ""
+                highest = ""
             if sign not in ("Positive", "Negative"):
                 sign = "Positive"
-            self.tags_tree.insert("", tk.END, values=(path, sign, rename))
+            self.tags_tree.insert("", tk.END, values=(path, sign, rename, highest))
 
         # ── output ──
         # Migrate any old Hide rules from legacy merge_columns to output
@@ -537,7 +543,7 @@ class ConfigsDialog(tk.Toplevel):
         if not item:
             return
         col_idx  = int(col_id[1:]) - 1
-        col_names = ("path", "sign", "rename")
+        col_names = ("path", "sign", "rename", "highest")
         col_name  = col_names[col_idx]
         bbox = self.tags_tree.bbox(item, col_id)
         if not bbox:
@@ -570,7 +576,7 @@ class ConfigsDialog(tk.Toplevel):
             editor.bind("<Escape>",   cancel_entry)
 
     def add_tags_row(self):
-        item = self.tags_tree.insert("", tk.END, values=("", "Positive", ""))
+        item = self.tags_tree.insert("", tk.END, values=("", "Positive", "", "", ""))
         self.tags_tree.selection_set(item)
         self.tags_tree.see(item)
 
@@ -731,9 +737,8 @@ class ProgressDialog(tk.Toplevel):
                              padx=24, pady=12, font=("TkDefaultFont", 10))
         self._lbl.pack()
 
-        self._bar = ttk.Progressbar(self, mode='indeterminate', length=240)
+        self._bar = ttk.Progressbar(self, mode='determinate', length=240, maximum=100)
         self._bar.pack(padx=24, pady=(0, 18))
-        self._bar.start(12)
 
         # Centre on parent
         self.update_idletasks()
@@ -751,8 +756,11 @@ class ProgressDialog(tk.Toplevel):
         """Update label text — must be called from the main thread."""
         self._lbl.config(text=msg)
 
+    def set_progress(self, pct):
+        """Set bar fill 0–100 — must be called from the main thread."""
+        self._bar['value'] = pct
+
     def close(self):
-        self._bar.stop()
         self.destroy()
 
 
@@ -821,7 +829,7 @@ class XMLParserApp(tk.Tk):
         dlg.transient(self)
         dlg.grab_set()
         dlg.resizable(True, True)
-        dlg.geometry("620x540")
+        dlg.geometry("660x680")
 
         text_frame = tk.Frame(dlg)
         text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 5))
@@ -839,56 +847,94 @@ class XMLParserApp(tk.Tk):
             "VALUE-TAGS TO EXTRACT\n"
             "─────────────────────\n"
             "Each row specifies one XML amount field to extract.\n"
-            "Each occurrence of that field becomes one row in the output.\n"
-            "All surrounding XML context (parent fields, sibling fields)\n"
-            "is collected automatically.\n"
+            "The parser finds every occurrence of that field in the\n"
+            "document and produces one output row per occurrence.\n"
             "\n"
-            "  Path    — XML path to the amount element.\n"
-            "            Simple: RmtdAmt\n"
-            "            Qualified: Strd/RfrdDocAmt/RmtdAmt\n"
+            "  Path          — XML path to the amount element.\n"
+            "                  Simple tag:    RmtdAmt\n"
+            "                  Nested path:   Strd/RfrdDocAmt/RmtdAmt\n"
             "\n"
-            "  Sign    — Positive: value kept as-is.\n"
-            "            Negative: value multiplied by -1.\n"
+            "  Sign          — Positive: value kept as-is.\n"
+            "                  Negative: value multiplied by -1.\n"
             "\n"
-            "  Rename  — Display name for the amount column and the tab.\n"
-            "            Rows with the same Rename appear on the same tab.\n"
-            "            Leave blank to use the Path as the name.\n"
+            "  Rename        — Display name for the amount column and the\n"
+            "                  output tab. Entries that share the same Rename\n"
+            "                  are merged onto the same tab.\n"
+            "                  Leave blank to use the Path as the name.\n"
             "\n"
-            "Defaults:\n"
-            "  RmtdAmt; Positive; AmountDebit\n"
-            "  CdtNoteAmt; Negative; AmountCredit\n"
+            "  Highest level — Ancestor tag at which the upward walk stops.\n"
+            "                  Context from tags above this level is ignored.\n"
+            "                  Leave blank to walk all the way to the root.\n"
+            "\n"
+            "\n"
+            "HOW PARSING WORKS\n"
+            "─────────────────\n"
+            "For each occurrence of a configured Path:\n"
+            "\n"
+            "  1. The parser starts at the matched element (the amount).\n"
+            "\n"
+            "  2. It walks UP through parent elements, stopping at the\n"
+            "     Highest level tag (or root if not set).\n"
+            "\n"
+            "  3. At each level, sibling elements that are not in the\n"
+            "     ancestor chain are collected as context columns.\n"
+            "     Siblings are descended recursively to gather leaf values.\n"
+            "\n"
+            "  4. Column order follows XML document order:\n"
+            "     — Siblings appearing before the ancestor chain in the XML\n"
+            "       become columns to the LEFT of the amount column.\n"
+            "     — Siblings appearing after become columns to the RIGHT.\n"
+            "     — Context from outer levels appears before inner levels.\n"
+            "\n"
+            "  5. If two context siblings share the same column name, their\n"
+            "     values are space-joined (trimmed) into one column.\n"
+            "\n"
+            "  6. The amount column itself is split into two columns:\n"
+            "       <Rename>        — numeric value\n"
+            "       <Rename>@Ccy    — currency code (if present)\n"
+            "\n"
+            "  7. Entries with the same Rename are merged onto one tab.\n"
+            "     Sign (Positive/Negative) is applied before merging.\n"
             "\n"
             "\n"
             "CONTROL SUMS  (right panel)\n"
             "───────────────────────────\n"
-            "After parsing, the right panel shows:\n"
+            "After parsing, the right panel shows per tab:\n"
             "\n"
-            "  Parsed sums   — Sum of all amount values per tab.\n"
-            "                  Negative entries are included with their sign.\n"
+            "  In XML   — Raw unsigned sum of that amount field directly\n"
+            "             from the XML, before any sign is applied.\n"
             "\n"
-            "  Document sums — <Sum> values found in the XML file itself\n"
-            "                  (e.g. TtlNtries/Sum in CAMT files).\n"
+            "  Parsed   — Signed sum after applying Positive/Negative.\n"
+            "             When two entries share a tab the net signed total\n"
+            "             is shown (e.g. debits + credits).\n"
             "\n"
-            "  OK / MISMATCH — The absolute sum of all parsed amounts is\n"
-            "                  compared to the document total. A MISMATCH\n"
-            "                  means amounts were lost or duplicated.\n"
+            "  OK / MISMATCH — The signed raw total is compared to the\n"
+            "             signed parsed total. A MISMATCH means values were\n"
+            "             lost or duplicated during parsing.\n"
             "\n"
             "\n"
             "OUTPUT\n"
             "──────\n"
-            "Fine-tunes which context columns appear in the output, what\n"
-            "they are called, and in what order they appear.\n"
+            "Fine-tunes which context columns appear, what they are called,\n"
+            "and in what order. Double-click a cell to edit.\n"
             "\n"
             "  Tag         — Limit this rule to a specific tab name.\n"
             "                Leave blank to apply to all tabs.\n"
-            "  Column Name — The column as it comes out of parsing.\n"
-            "  Rename to   — Optional. Replace the column header.\n"
+            "  Column Name — The column name as it comes out of parsing.\n"
+            "  Rename to   — Optional. Replaces the column header.\n"
+            "                Two columns renamed to the same name are merged:\n"
+            "                their values are space-joined (trimmed).\n"
             "  Hide        — Single-click to toggle Yes/No.\n"
-            "                Yes removes the column from output.\n"
-            "  Order       — Integer. Ordered columns come first.\n"
+            "                Yes removes the column from the output.\n"
+            "  Order       — Integer. Context columns with an Order number\n"
+            "                come first, sorted ascending. Ties keep their\n"
+            "                natural parse order. Amount columns are not\n"
+            "                affected by Order — they always reflect the\n"
+            "                XML document position.\n"
             "\n"
             "Only rows where Hide = Yes, Order, or Rename to are set\n"
-            "are saved. Others reappear automatically on next parse.\n"
+            "are saved. All other columns reappear automatically on\n"
+            "the next parse.\n"
         )
 
         txt.insert("1.0", content)
@@ -1130,7 +1176,8 @@ class XMLParserApp(tk.Tk):
             for child in elem:
                 self._collect_sibling_leaves(child, rel_path + "/" + child.tag, row)
 
-    def collect_value_rows(self, root, value_path_str, rename, parent_map, on_progress=None):
+    def collect_value_rows(self, root, value_path_str, rename, parent_map,
+                           highest_level="", on_progress=None):
         """Find all occurrences of value_path_str and build one row per occurrence.
 
         Each row contains the amount value plus all sibling context collected
@@ -1147,6 +1194,11 @@ class XMLParserApp(tk.Tk):
         total = len(found)
         rows = []
         all_keys = set()
+        # Track column key order respecting XML document order:
+        # siblings that precede the ancestor chain go before Amount;
+        # siblings that follow go after Amount.
+        before_key_order = {}  # key -> None (insertion-ordered set)
+        after_key_order  = {}
 
         for idx, val_elem in enumerate(found):
             if on_progress:
@@ -1156,29 +1208,50 @@ class XMLParserApp(tk.Tk):
                 col_name + "@Ccy": val_elem.attrib.get('Ccy', ''),
             }
 
-            # Build set of ancestor ids so we skip the branch we came from
-            ancestor_ids = set()
-            cur = val_elem
-            while cur in parent_map:
-                ancestor_ids.add(id(cur))
-                cur = parent_map[cur]
+            before_levels = []  # one dict per walk step, innermost first
+            after_levels  = []
 
-            # Walk up collecting siblings
             current = val_elem
             while current in parent_map:
                 parent = parent_map[current]
+                before_this = {}
+                after_this  = {}
+                passed = False
                 for child in parent:
-                    if child is not current:
-                        self._collect_sibling_leaves(child, child.tag, row)
+                    if child is current:
+                        passed = True
+                    elif not passed:
+                        self._collect_sibling_leaves(child, child.tag, before_this)
+                    else:
+                        self._collect_sibling_leaves(child, child.tag, after_this)
+                before_levels.append(before_this)
+                after_levels.append(after_this)
+                row.update(before_this)
+                row.update(after_this)
+                if highest_level and parent.tag == highest_level:
+                    break
                 current = parent
 
             rows.append(row)
             all_keys.update(row.keys())
 
-        # Column order: amount first, then Ccy, then everything else sorted
-        columns = [col_name, col_name + "@Ccy"]
+            # Outermost before-siblings first, innermost last (just before Amount)
+            for d in reversed(before_levels):
+                for k in d:
+                    if k not in before_key_order and k not in after_key_order:
+                        before_key_order[k] = None
+            # Innermost after-siblings first, outermost last (just after Amount)
+            for d in after_levels:
+                for k in d:
+                    if k not in before_key_order and k not in after_key_order:
+                        after_key_order[k] = None
+
+        columns = (list(before_key_order.keys()) +
+                   [col_name, col_name + "@Ccy"] +
+                   list(after_key_order.keys()))
+        covered = set(columns)
         for k in sorted(all_keys):
-            if k not in (col_name, col_name + "@Ccy"):
+            if k not in covered:
                 columns.append(k)
 
         col_formats = {col_name: "Amount"}
@@ -1192,19 +1265,22 @@ class XMLParserApp(tk.Tk):
         """
         entries = []
         for entry in value_tag_entries:
-            parts = [p.strip() for p in entry.split(';')]
-            path   = parts[0] if len(parts) > 0 else ""
-            sign   = parts[1] if len(parts) > 1 else "Positive"
-            rename = parts[2] if len(parts) > 2 else ""
+            parts   = [p.strip() for p in entry.split(';')]
+            path    = parts[0] if len(parts) > 0 else ""
+            sign    = parts[1] if len(parts) > 1 else "Positive"
+            rename  = parts[2] if len(parts) > 2 else ""
+            highest = parts[3] if len(parts) > 3 else ""
             # Migrate old format
             if sign in ("Yes", "No"):
                 sign = "Positive"
                 rename = ""
+                highest = ""
             if sign not in ("Positive", "Negative"):
                 sign = "Positive"
             tab = rename if rename else path
             if path:
-                entries.append({'path': path, 'sign': sign, 'rename': rename, 'tab': tab})
+                entries.append({'path': path, 'sign': sign, 'rename': rename,
+                                'tab': tab, 'highest': highest})
 
         if not entries:
             return []
@@ -1232,6 +1308,7 @@ class XMLParserApp(tk.Tk):
                     return _cb
                 cols, rows, fmts = self.collect_value_rows(
                     root, e['path'], e['rename'] if e['rename'] else e['path'], parent_map,
+                    highest_level=e.get('highest', ''),
                     on_progress=_make_prog() if progress_cb else None)
                 if not rows:
                     continue
@@ -1303,10 +1380,34 @@ class XMLParserApp(tk.Tk):
         new_columns = [col for col in columns if col not in hide_cols]
         ordered   = sorted([c for c in new_columns if c in order_map], key=lambda c: order_map[c])
         unordered = [c for c in new_columns if c not in order_map]
-        final_orig    = ordered + unordered
-        final_columns = [rename_map.get(c, c) for c in final_orig]
-        new_rows      = [{rename_map.get(col, col): row.get(col, '') for col in final_orig} for row in rows]
-        new_formats = {rename_map.get(c, c): fmt for c, fmt in (col_formats or {}).items()}
+        final_orig = ordered + unordered
+
+        # Group original columns by their final (possibly renamed) name so that
+        # columns sharing a name have their content merged rather than overwritten.
+        merge_groups = {}   # final_name -> [orig_col, ...]
+        seen_final   = []
+        for orig_col in final_orig:
+            final_name = rename_map.get(orig_col, orig_col)
+            if final_name not in merge_groups:
+                merge_groups[final_name] = []
+                seen_final.append(final_name)
+            merge_groups[final_name].append(orig_col)
+
+        final_columns = seen_final
+        new_rows = []
+        for row in rows:
+            new_row = {}
+            for final_name, orig_cols in merge_groups.items():
+                parts  = [str(row.get(c, '')).strip() for c in orig_cols]
+                new_row[final_name] = ' '.join(p for p in parts if p)
+            new_rows.append(new_row)
+
+        fmts = col_formats or {}
+        new_formats = {}
+        for final_name, orig_cols in merge_groups.items():
+            if all(fmts.get(c) == 'Amount' for c in orig_cols):
+                new_formats[final_name] = 'Amount'
+
         return final_columns, new_rows, new_formats
 
     # ── no-config fallback: element-based parsing ─────────────────────────────
@@ -1411,8 +1512,14 @@ class XMLParserApp(tk.Tk):
         return sums
 
     def _calc_raw_xml_sums(self, roots, value_tag_entries):
-        """Sum raw (unsigned) element values per tab, before sign application."""
-        raw = {}   # tab_name -> float (always positive)
+        """Sum element values per tab before sign application.
+
+        Returns (unsigned, signed):
+          unsigned — always positive, used for the 'In XML' display
+          signed   — sign applied per entry, used for the mismatch check
+        """
+        unsigned = {}
+        signed   = {}
         for entry_str in value_tag_entries:
             parts  = [p.strip() for p in entry_str.split(';')]
             path   = parts[0] if parts else ""
@@ -1420,17 +1527,22 @@ class XMLParserApp(tk.Tk):
             rename = parts[2] if len(parts) > 2 else ""
             if sign in ("Yes", "No"):
                 sign = "Positive"
+            if sign not in ("Positive", "Negative"):
+                sign = "Positive"
             tab = rename if rename else path
             if not path:
                 continue
+            mult = -1.0 if sign == "Negative" else 1.0
             for root in roots:
                 for elem in root.findall('.//' + path):
                     if elem.text:
                         try:
-                            raw[tab] = raw.get(tab, 0.0) + abs(float(elem.text.strip().replace(',', '.')))
+                            val = abs(float(elem.text.strip().replace(',', '.')))
+                            unsigned[tab] = unsigned.get(tab, 0.0) + val
+                            signed[tab]   = signed.get(tab, 0.0) + mult * val
                         except (ValueError, TypeError):
                             pass
-        return raw
+        return unsigned, signed
 
     def _extract_document_sums(self, roots):
         results = []
@@ -1455,14 +1567,13 @@ class XMLParserApp(tk.Tk):
                 results.append((label, val))
         return results
 
-    def _update_control_panel(self, parsed_sums, raw_sums, doc_sums):
+    def _update_control_panel(self, parsed_sums, raw_sums, signed_raw_sums=None):
         for child in self._ctrl_inner.winfo_children():
             child.destroy()
 
-        lbl_pad  = {"padx": 8, "pady": (6, 1), "anchor": "w"}
-        sub_pad  = {"padx": 16, "pady": 0}
+        lbl_pad = {"padx": 8, "pady": (6, 1), "anchor": "w"}
+        sub_pad = {"padx": 16, "pady": 0}
 
-        # Per-tab before/after rows
         for tab_name in parsed_sums:
             tk.Label(self._ctrl_inner, text=tab_name,
                      font=("TkDefaultFont", 9, "bold")).pack(**lbl_pad)
@@ -1479,30 +1590,22 @@ class XMLParserApp(tk.Tk):
                 tk.Label(row_f, text=f"{value:,.2f}", anchor="e",
                          font=("TkDefaultFont", 9), fg=color).pack(side=tk.RIGHT)
 
-        if doc_sums:
-            ttk.Separator(self._ctrl_inner, orient="horizontal").pack(fill=tk.X, padx=8, pady=6)
-            tk.Label(self._ctrl_inner, text="Document sums:",
-                     font=("TkDefaultFont", 9, "bold")).pack(**lbl_pad)
-            for label, val in doc_sums:
-                row_f = tk.Frame(self._ctrl_inner)
-                row_f.pack(fill=tk.X, padx=8, pady=1)
-                tk.Label(row_f, text=label + ":", anchor="w",
-                         font=("TkDefaultFont", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
-                tk.Label(row_f, text=f"{val:,.2f}", anchor="e",
-                         font=("TkDefaultFont", 9)).pack(side=tk.RIGHT)
+        ttk.Separator(self._ctrl_inner, orient="horizontal").pack(fill=tk.X, padx=8, pady=6)
 
-            ttk.Separator(self._ctrl_inner, orient="horizontal").pack(fill=tk.X, padx=8, pady=6)
+        # Use signed raw sums so that entries sharing a tab with opposite signs
+        # don't produce a false mismatch (e.g. Positive AmountDebit + Negative
+        # AmountCredit → net signed total should equal the parsed net total).
+        ref_sums = signed_raw_sums if signed_raw_sums is not None else raw_sums
+        raw_abs    = sum(ref_sums.values())
+        parsed_abs = sum(parsed_sums.values())
+        mismatch   = abs(raw_abs - parsed_abs) > 0.005
 
-            raw_abs   = sum(v for v in raw_sums.values())   # unsigned XML totals, unaffected by sign setting
-            doc_total = sum(v for _, v in doc_sums)
-            mismatch  = abs(raw_abs - doc_total) > 0.005
-
-            chip_bg  = "#E74C3C" if mismatch else "#27AE60"
-            chip_txt = "MISMATCH" if mismatch else "OK"
-            chip_f = tk.Frame(self._ctrl_inner, bg=chip_bg)
-            chip_f.pack(padx=8, pady=4, anchor="w")
-            tk.Label(chip_f, text=chip_txt, bg=chip_bg, fg="white",
-                     font=("TkDefaultFont", 9, "bold"), padx=8, pady=3).pack()
+        chip_bg  = "#E74C3C" if mismatch else "#27AE60"
+        chip_txt = "MISMATCH" if mismatch else "OK"
+        chip_f = tk.Frame(self._ctrl_inner, bg=chip_bg)
+        chip_f.pack(padx=8, pady=4, anchor="w")
+        tk.Label(chip_f, text=chip_txt, bg=chip_bg, fg="white",
+                 font=("TkDefaultFont", 9, "bold"), padx=8, pady=3).pack()
 
         self._ctrl_canvas.configure(scrollregion=self._ctrl_canvas.bbox("all"))
 
@@ -1538,9 +1641,19 @@ class XMLParserApp(tk.Tk):
                         self._hidden_value_cols = False
                         n_files = len(file_paths)
                         def _make_prog_cb(_i=i):
+                            last_pct = [-1]
                             def _cb(path, done, total):
+                                pct = int(done / total * 100) if total else 0
+                                if done == 1:
+                                    last_pct[0] = -1   # force refresh at start of each path
+                                if pct == last_pct[0]:
+                                    return
+                                last_pct[0] = pct
                                 msg = f"File {_i+1}/{n_files}: {path} ({done}/{total})"
-                                self.after(0, lambda m=msg: prog.set_message(m))
+                                def _update(m=msg, p=pct):
+                                    prog.set_message(m)
+                                    prog.set_progress(p)
+                                self.after(0, _update)
                             return _cb
                         tabs = self.parse_with_value_tags(root, config_tags, output_rules,
                                                           progress_cb=_make_prog_cb())
@@ -1619,10 +1732,9 @@ class XMLParserApp(tk.Tk):
                                          fg="#1E8449", bg="#EAF7EE")
             self.status_border.pack(side=tk.LEFT, padx=(10, 0))
 
-            parsed_sums = self._calc_parsed_sums()
-            raw_sums    = self._calc_raw_xml_sums(all_roots, config_tags)
-            doc_sums    = self._extract_document_sums(all_roots)
-            self._update_control_panel(parsed_sums, raw_sums, doc_sums)
+            parsed_sums              = self._calc_parsed_sums()
+            raw_sums, signed_raw_sums = self._calc_raw_xml_sums(all_roots, config_tags)
+            self._update_control_panel(parsed_sums, raw_sums, signed_raw_sums)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1728,7 +1840,7 @@ class XMLParserApp(tk.Tk):
             if sys.platform == "darwin":
                 subprocess.Popen(["open", "-R", file_path])
             else:
-                subprocess.Popen(f'explorer /select,"{file_path}"')
+                subprocess.Popen(['explorer', '/select,', file_path.replace('/', '\\')])
             dialog.destroy()
 
         def open_file():
