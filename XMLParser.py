@@ -883,9 +883,9 @@ class ProgressDialog(tk.Toplevel):
 class XMLParserApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.withdraw()   # hide until geometry is applied to avoid flash on wrong monitor
 
         self.settings_manager = SettingsManager()
-        self.update_idletasks()
         self.settings_manager.validate_window_position(
             self.winfo_screenwidth(), self.winfo_screenheight()
         )
@@ -901,8 +901,10 @@ class XMLParserApp(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._initialized = False
-        self.after_idle(lambda: setattr(self, '_initialized', True))
         self.bind("<Configure>", self.on_resize)
+
+        self.deiconify()   # show at the saved position
+        self.after_idle(lambda: setattr(self, '_initialized', True))
 
         if sys.platform == "darwin":
             try:
@@ -1339,8 +1341,6 @@ class XMLParserApp(tk.Tk):
 
     def on_resize(self, event):
         if event.widget == self and self._initialized:
-            self.settings_manager.window_x      = self.winfo_x()
-            self.settings_manager.window_y      = self.winfo_y()
             self.settings_manager.window_width  = self.winfo_width()
             self.settings_manager.window_height = self.winfo_height()
 
