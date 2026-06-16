@@ -51,6 +51,11 @@ pip install -r requirements.txt
 pyinstaller --onefile --windowed --icon=icon.icns XMLParser.py
 ```
 
+## Disclaimer
+Important: This software is provided "as is", without warranty of any kind. The authors and contributors take no responsibility or liability for the accuracy, correctness, or completeness of the parsed data. Users should independently verify any critical data exported by this tool.
+
 ## License
 
-[Add your license information here]
+## License
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
