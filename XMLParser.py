@@ -68,6 +68,7 @@ class SettingsManager:
         self.configs = {}
         self.merge_columns = {}
         self.output_columns = {}
+        self.only_order_columns = {}
         self.last_directory = ""
         self.last_selected_config = ""
         self.decimal_separator = "english"
@@ -121,10 +122,12 @@ class SettingsManager:
                     self.merge_columns[config_name] = [v for v in merge.split("\n") if v] if merge else []
                     output = self.config[section].get("output", "")
                     self.output_columns[config_name] = [v for v in output.split("\n") if v] if output else []
+                    self.only_order_columns[config_name] = self.config[section].getboolean("only_order_columns", False)
         else:
             self.configs["CAMT"] = list(DEFAULT_VALUE_TAGS)
             self.merge_columns["CAMT"] = []
             self.output_columns["CAMT"] = []
+            self.only_order_columns["CAMT"] = False
             self.save()
 
     def save(self):
@@ -147,7 +150,8 @@ class SettingsManager:
             self.config[f"Config:{config_name}"] = {
                 "values": "\n".join(values),
                 "merge": "\n".join(self.merge_columns.get(config_name, [])),
-                "output": "\n".join(self.output_columns.get(config_name, []))
+                "output": "\n".join(self.output_columns.get(config_name, [])),
+                "only_order_columns": str(self.only_order_columns.get(config_name, False))
             }
 
         with open(self.settings_file, "w") as f:
@@ -184,6 +188,14 @@ class SettingsManager:
             self.output_columns[name] = rules
             self.save()
 
+    def get_only_order_columns(self, name):
+        return self.only_order_columns.get(name, False)
+
+    def update_only_order_columns(self, name, value):
+        if name in self.configs:
+            self.only_order_columns[name] = value
+            self.save()
+
     def reset_config(self, name):
         if name in self.configs:
             self.configs[name] = list(DEFAULT_VALUE_TAGS)
@@ -201,11 +213,21 @@ class SettingsManager:
         return self.merge_columns.get(name, [])
 
     def validate_window_position(self, screen_width, screen_height):
-        tolerance = 50
-        if (self.window_x < -tolerance or
-            self.window_y < -tolerance or
-            self.window_x + self.window_width > screen_width + tolerance or
-            self.window_y + self.window_height > screen_height + tolerance):
+        # Allow positions outside the primary screen by up to one full screen
+        # dimension in any direction — this lets windows on secondary monitors
+        # survive across sessions. Only reset if the title bar is completely
+        # unreachable (i.e. more than one screen away from the primary).
+        min_x = -screen_width
+        min_y = -screen_height
+        max_x = screen_width * 2
+        max_y = screen_height * 2
+        title_bar_visible = (
+            self.window_x + self.window_width  > min_x and
+            self.window_y + 30                 > min_y and
+            self.window_x                      < max_x and
+            self.window_y                      < max_y
+        )
+        if not title_bar_visible:
             self.window_x = 100
             self.window_y = 100
             self.window_width = 1000
@@ -224,8 +246,9 @@ class ConfigsDialog(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
-        self.pending_tags   = {}   # {config_name: [tag_entry_strings]}
-        self.pending_output = {}   # {config_name: [output_row_strings]}
+        self.pending_tags         = {}   # {config_name: [tag_entry_strings]}
+        self.pending_output       = {}   # {config_name: [output_row_strings]}
+        self.pending_only_order   = {}   # {config_name: bool}
 
         self.create_widgets()
         self.refresh_config_list()
@@ -344,6 +367,10 @@ class ConfigsDialog(tk.Toplevel):
         output_outer.pack(fill=tk.X, padx=10, pady=5)
         tk.Label(output_outer, text="Output:").pack(anchor=tk.W)
 
+        self.only_order_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(output_outer, text="Only display columns with Order",
+                       variable=self.only_order_var).pack(anchor=tk.W, pady=(0, 4))
+
         output_table_frame = tk.Frame(output_outer)
         output_table_frame.pack(fill=tk.X)
         self.output_tree = ttk.Treeview(output_table_frame,
@@ -404,8 +431,9 @@ class ConfigsDialog(tk.Toplevel):
     def _buffer_current_edits(self):
         tags = self._read_ui()
         output = self._read_output_ui()
-        self.pending_tags[self.current_config]   = tags
-        self.pending_output[self.current_config] = output
+        self.pending_tags[self.current_config]       = tags
+        self.pending_output[self.current_config]     = output
+        self.pending_only_order[self.current_config] = self.only_order_var.get()
 
     def _read_ui(self):
         tags = []
@@ -513,6 +541,12 @@ class ConfigsDialog(tk.Toplevel):
             rename_val, hide_val, order_val = saved_map.get((tag_s, col), ('', 'No', ''))
             self.output_tree.insert("", tk.END, values=(tag_s, col, rename_val, hide_val, order_val))
 
+        only_order = self.pending_only_order.get(
+            config_name,
+            self.settings_manager.get_only_order_columns(config_name)
+        )
+        self.only_order_var.set(only_order)
+
     # ── save / close ─────────────────────────────────────────────────────────
 
     def close_and_save(self):
@@ -524,6 +558,8 @@ class ConfigsDialog(tk.Toplevel):
             self.settings_manager.update_merge_columns(config_name, [])
         for config_name, output in self.pending_output.items():
             self.settings_manager.update_output_columns(config_name, output)
+        for config_name, only_order in self.pending_only_order.items():
+            self.settings_manager.update_only_order_columns(config_name, only_order)
         self.destroy()
 
     # ── tags table editing ────────────────────────────────────────────────────
@@ -894,20 +930,22 @@ class XMLParserApp(tk.Tk):
             "     Sign (Positive/Negative) is applied before merging.\n"
             "\n"
             "\n"
-            "CONTROL SUMS  (right panel)\n"
-            "───────────────────────────\n"
-            "After parsing, the right panel shows per tab:\n"
+            "CONTROL SUMS\n"
+            "────────────\n"
+            "After parsing, a 'Control sums: OK / MISMATCH' button appears\n"
+            "in the toolbar. Click it to open the control sums popup.\n"
             "\n"
-            "  In XML   — Raw unsigned sum of that amount field directly\n"
-            "             from the XML, before any sign is applied.\n"
+            "  In XML   — Signed sum of that amount field taken directly\n"
+            "             from the XML, with Positive/Negative applied.\n"
+            "             This is the ground truth from the source file.\n"
             "\n"
-            "  Parsed   — Signed sum after applying Positive/Negative.\n"
+            "  Parsed   — Signed sum of the parsed output rows.\n"
             "             When two entries share a tab the net signed total\n"
             "             is shown (e.g. debits + credits).\n"
             "\n"
-            "  OK / MISMATCH — The signed raw total is compared to the\n"
-            "             signed parsed total. A MISMATCH means values were\n"
-            "             lost or duplicated during parsing.\n"
+            "  OK / MISMATCH — In XML total is compared to Parsed total.\n"
+            "             A MISMATCH means values were lost or duplicated\n"
+            "             during parsing.\n"
             "\n"
             "\n"
             "OUTPUT\n"
@@ -1240,7 +1278,7 @@ class XMLParserApp(tk.Tk):
         col_formats = {col_name: "Amount"}
         return columns, rows, col_formats
 
-    def parse_with_value_tags(self, root, value_tag_entries, output_rules=None, progress_cb=None):
+    def parse_with_value_tags(self, root, value_tag_entries, output_rules=None, progress_cb=None, only_order=False):
         """Parse XML using value-tag entries of the form 'path; sign; rename'.
 
         Returns list of (tab_name, columns, rows, col_formats).
@@ -1317,17 +1355,17 @@ class XMLParserApp(tk.Tk):
             if not all_rows:
                 continue
 
-            if output_rules:
+            if output_rules or only_order:
                 all_columns, all_rows, col_formats = self.apply_output_columns(
-                    all_columns, all_rows, output_rules, tab_name, col_formats)
+                    all_columns, all_rows, output_rules, tab_name, col_formats, only_order)
 
             tabs.append((tab_name, all_columns, all_rows, col_formats))
 
         return tabs
 
-    def apply_output_columns(self, columns, rows, output_rules, tag="", col_formats=None):
+    def apply_output_columns(self, columns, rows, output_rules, tag="", col_formats=None, only_order=False):
         """Apply hide, reorder, and rename rules from the Output config section."""
-        if not output_rules:
+        if not output_rules and not only_order:
             return columns, rows, col_formats or {}
         hide_cols  = set()
         order_map  = {}
@@ -1355,6 +1393,11 @@ class XMLParserApp(tk.Tk):
                     pass
             if rename:
                 rename_map[col] = rename
+        if only_order:
+            for col in columns:
+                if col not in order_map and col not in hide_cols:
+                    hide_cols.add(col)
+
         if hide_cols:
             fmts = col_formats or {}
             if any(c.endswith('@Value') or fmts.get(c) == 'Amount' for c in hide_cols):
@@ -1642,6 +1685,7 @@ class XMLParserApp(tk.Tk):
         has_config      = selected_config and selected_config != "No configs"
         config_tags     = self.settings_manager.get_config(selected_config) if has_config else []
         output_rules    = self.settings_manager.get_output_columns(selected_config) if has_config else []
+        only_order      = self.settings_manager.get_only_order_columns(selected_config) if has_config else False
 
         prog = ProgressDialog(self, len(file_paths))
         result_box = [None]   # filled by worker thread
@@ -1679,15 +1723,16 @@ class XMLParserApp(tk.Tk):
                                 self.after(0, _update)
                             return _cb
                         tabs = self.parse_with_value_tags(root, config_tags, output_rules,
-                                                          progress_cb=_make_prog_cb())
+                                                          progress_cb=_make_prog_cb(),
+                                                          only_order=only_order)
                         if self._hidden_value_cols:
                             hidden = True
                     else:
                         columns, rows = self.element_to_rows(root)
-                        if output_rules:
+                        if output_rules or only_order:
                             self._hidden_value_cols = False
                             columns, rows, col_formats = self.apply_output_columns(
-                                columns, rows, output_rules, "Sheet1", {})
+                                columns, rows, output_rules, "Sheet1", {}, only_order)
                             if self._hidden_value_cols:
                                 hidden = True
                         else:
