@@ -1,7 +1,7 @@
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import configparser
 import os
 import subprocess
@@ -156,6 +156,38 @@ class SettingsManager:
 
         with open(self.settings_file, "w") as f:
             self.config.write(f)
+
+    def export_profile(self, name, path):
+        """Write a single [Config:name] section to an ini file."""
+        cfg = configparser.ConfigParser()
+        cfg[f"Config:{name}"] = {
+            "values":              "\n".join(self.configs.get(name, [])),
+            "merge":               "\n".join(self.merge_columns.get(name, [])),
+            "output":              "\n".join(self.output_columns.get(name, [])),
+            "only_order_columns":  str(self.only_order_columns.get(name, False)),
+        }
+        with open(path, "w") as f:
+            cfg.write(f)
+
+    def import_profile(self, name, path):
+        """Read a profile ini file and store it under the given name."""
+        cfg = configparser.ConfigParser()
+        cfg.read(path)
+        section = None
+        for sec in cfg.sections():
+            if sec.startswith("Config:"):
+                section = sec
+                break
+        if section is None:
+            raise ValueError("No [Config:…] section found in file.")
+        values_raw = cfg[section].get("values", "")
+        self.configs[name]             = [v for v in values_raw.split("\n") if v]
+        merge_raw  = cfg[section].get("merge", "")
+        self.merge_columns[name]       = [v for v in merge_raw.split("\n") if v]
+        output_raw = cfg[section].get("output", "")
+        self.output_columns[name]      = [v for v in output_raw.split("\n") if v]
+        self.only_order_columns[name]  = cfg[section].getboolean("only_order_columns", False)
+        self.save()
 
     def add_config(self, name, values=None):
         self.configs[name] = values if values else list(DEFAULT_VALUE_TAGS)
@@ -845,6 +877,11 @@ class XMLParserApp(tk.Tk):
         decimal_menu.add_radiobutton(label="Swedish  (1 234,56)", variable=self.decimal_var,
                                      value="swedish", command=self.on_decimal_change)
 
+        profiles_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Profiles", menu=profiles_menu)
+        profiles_menu.add_command(label="Export profile…", command=self.export_profile)
+        profiles_menu.add_command(label="Import profile…", command=self.import_profile)
+
         dev_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Dev", menu=dev_menu)
         dev_menu.add_command(label="Open Folder", command=self.open_program_folder)
@@ -1133,6 +1170,75 @@ class XMLParserApp(tk.Tk):
 
     def open_configs(self):
         ConfigsDialog(self, self.settings_manager, self.config_var.get())
+
+    def export_profile(self):
+        selected = self.config_var.get()
+        if not selected or selected == "No configs":
+            messagebox.showwarning("Export Profile", "No profile selected.", parent=self)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Export Profile",
+            initialdir=self.settings_manager.last_directory or os.path.expanduser("~"),
+            initialfile=f"{selected}.ini",
+            defaultextension=".ini",
+            filetypes=[("INI files", "*.ini"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            self.settings_manager.export_profile(selected, path)
+        except Exception as e:
+            messagebox.showerror("Export Profile", f"Failed to export: {e}", parent=self)
+
+    def import_profile(self):
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Import Profile",
+            initialdir=self.settings_manager.last_directory or os.path.expanduser("~"),
+            filetypes=[("INI files", "*.ini"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        self._do_import_profile(path)
+
+    def _do_import_profile(self, path, prefill_name=""):
+        name = simpledialog.askstring(
+            "Import Profile",
+            "Enter a name for this profile:",
+            initialvalue=prefill_name,
+            parent=self,
+        )
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+
+        if name in self.settings_manager.configs:
+            choice = messagebox.askquestion(
+                "Profile Exists",
+                f'A profile named "{name}" already exists.\n\nOverwrite it?',
+                icon="warning",
+                type=messagebox.YESNOCANCEL,
+                parent=self,
+            )
+            if choice == "cancel":
+                return
+            if choice == "no":
+                self._do_import_profile(path, prefill_name=name)
+                return
+
+        try:
+            self.settings_manager.import_profile(name, path)
+        except Exception as e:
+            messagebox.showerror("Import Profile", f"Failed to import: {e}", parent=self)
+            return
+
+        self.update_config_dropdown()
+        self.config_var.set(name)
+        messagebox.showinfo("Import Profile", f'Profile "{name}" imported successfully.', parent=self)
 
     def on_resize(self, event):
         if event.widget == self:
