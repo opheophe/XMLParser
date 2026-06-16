@@ -210,6 +210,8 @@ class SettingsManager:
         self.merge_columns[new_name]      = self.merge_columns.pop(old_name, [])
         self.output_columns[new_name]     = self.output_columns.pop(old_name, [])
         self.only_order_columns[new_name] = self.only_order_columns.pop(old_name, False)
+        if self.last_selected_config == old_name:
+            self.last_selected_config = new_name
         self.save()
 
     def update_config(self, name, values):
@@ -369,6 +371,18 @@ class ConfigsDialog(tk.Toplevel):
                                      bg="#E67E22", fg="white",
                                      activebackground="#CA6F1E", activeforeground="white")
         self.reset_button.pack(side=tk.LEFT, padx=5)
+        make_btn(buttons_frame, text="Import",
+                 command=self.import_profile,
+                 bg="#7F8C8D", fg="white",
+                 activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(buttons_frame, text="Export",
+                 command=self.export_profile,
+                 bg="#7F8C8D", fg="white",
+                 activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
+        make_btn(buttons_frame, text="Rename",
+                 command=self.rename_profile,
+                 bg="#7F8C8D", fg="white",
+                 activebackground="#616A6B", activeforeground="white").pack(side=tk.LEFT, padx=5)
 
         # ── Value-tags to extract table ────────────────────────────────────────
         tags_outer = tk.Frame(content)
@@ -588,6 +602,36 @@ class ConfigsDialog(tk.Toplevel):
             self.settings_manager.get_only_order_columns(config_name)
         )
         self.only_order_var.set(only_order)
+
+    # ── profile import / export / rename ─────────────────────────────────────
+
+    def _selected_config_name(self):
+        sel = self.config_listbox.curselection()
+        if not sel:
+            return None
+        return self.config_listbox.get(sel[0])
+
+    def import_profile(self):
+        self.master.import_profile()
+        self.refresh_config_list()
+
+    def export_profile(self):
+        name = self._selected_config_name()
+        if not name:
+            messagebox.showwarning("Export Profile", "Select a config first.", parent=self)
+            return
+        self.master.config_var.set(name)
+        self.master.export_profile()
+
+    def rename_profile(self):
+        name = self._selected_config_name()
+        if not name:
+            messagebox.showwarning("Rename Profile", "Select a config first.", parent=self)
+            return
+        self._buffer_current_edits()
+        self.master.config_var.set(name)
+        self.master.rename_profile()
+        self.refresh_config_list()
 
     # ── save / close ─────────────────────────────────────────────────────────
 
@@ -856,6 +900,8 @@ class XMLParserApp(tk.Tk):
         self.update_config_dropdown()
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._initialized = False
+        self.after_idle(lambda: setattr(self, '_initialized', True))
         self.bind("<Configure>", self.on_resize)
 
         if sys.platform == "darwin":
@@ -886,12 +932,6 @@ class XMLParserApp(tk.Tk):
                                      value="english", command=self.on_decimal_change)
         decimal_menu.add_radiobutton(label="Swedish  (1 234,56)", variable=self.decimal_var,
                                      value="swedish", command=self.on_decimal_change)
-
-        profiles_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Profiles", menu=profiles_menu)
-        profiles_menu.add_command(label="Export profile…", command=self.export_profile)
-        profiles_menu.add_command(label="Import profile…", command=self.import_profile)
-        profiles_menu.add_command(label="Rename profile…", command=self.rename_profile)
 
         dev_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Dev", menu=dev_menu)
@@ -1014,6 +1054,13 @@ class XMLParserApp(tk.Tk):
             "                natural parse order. Amount columns are not\n"
             "                affected by Order — they always reflect the\n"
             "                XML document position.\n"
+            "\n"
+            "  Only display columns with order\n"
+            "              — Checkbox above the table. When checked, any\n"
+            "                column without an Order value is treated as\n"
+            "                hidden. Only columns that have an Order number\n"
+            "                appear in the output. The setting is saved per\n"
+            "                profile.\n"
             "\n"
             "Only rows where Hide = Yes, Order, or Rename to are set\n"
             "are saved. All other columns reappear automatically on\n"
@@ -1291,8 +1338,10 @@ class XMLParserApp(tk.Tk):
         self.config_var.set(new_name)
 
     def on_resize(self, event):
-        if event.widget == self:
-            self.settings_manager.window_width = self.winfo_width()
+        if event.widget == self and self._initialized:
+            self.settings_manager.window_x      = self.winfo_x()
+            self.settings_manager.window_y      = self.winfo_y()
+            self.settings_manager.window_width  = self.winfo_width()
             self.settings_manager.window_height = self.winfo_height()
 
     def on_close(self):
