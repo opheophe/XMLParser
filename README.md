@@ -28,6 +28,7 @@ This is normal for apps not distributed through the App Store and ensures your s
 
 ## Features
 
+- Adapted for both PC and Mac
 - Parse XML files with customizable extraction rules
 - Export data to CSV and Excel formats
 - Configurable tag extraction with sign control (positive/negative)
