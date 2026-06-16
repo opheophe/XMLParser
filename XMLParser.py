@@ -1616,6 +1616,7 @@ class XMLParserApp(tk.Tk):
         title, message, color = self._status_info
         win = tk.Toplevel(self)
         win.title("Parse Status")
+        win.transient(self)
         win.resizable(False, False)
         win.minsize(300, 0)
 
@@ -1642,6 +1643,7 @@ class XMLParserApp(tk.Tk):
 
         win = tk.Toplevel(self)
         win.title("Control Sums")
+        win.transient(self)
         win.resizable(True, False)
         win.minsize(280, 0)
 
@@ -1674,6 +1676,11 @@ class XMLParserApp(tk.Tk):
                  font=("TkDefaultFont", 9, "bold"), padx=8, pady=3).pack()
 
         ttk.Button(win, text="Close", command=win.destroy).pack(pady=(0, 10))
+
+        win.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width()  - win.winfo_width())  // 2
+        y = self.winfo_y() + (self.winfo_height() - win.winfo_height()) // 2
+        win.geometry(f"+{x}+{y}")
 
     # ── main parse/display ────────────────────────────────────────────────────
 
