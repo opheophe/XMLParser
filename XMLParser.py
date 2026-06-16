@@ -166,13 +166,13 @@ class SettingsManager:
             "output":              "\n".join(self.output_columns.get(name, [])),
             "only_order_columns":  str(self.only_order_columns.get(name, False)),
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             cfg.write(f)
 
     def import_profile(self, name, path):
         """Read a profile ini file and store it under the given name."""
         cfg = configparser.ConfigParser()
-        cfg.read(path)
+        cfg.read(path, encoding="utf-8")
         section = None
         for sec in cfg.sections():
             if sec.startswith("Config:"):
@@ -200,7 +200,17 @@ class SettingsManager:
             del self.configs[name]
             self.merge_columns.pop(name, None)
             self.output_columns.pop(name, None)
+            self.only_order_columns.pop(name, None)
             self.save()
+
+    def rename_config(self, old_name, new_name):
+        if old_name not in self.configs:
+            return
+        self.configs[new_name]            = self.configs.pop(old_name)
+        self.merge_columns[new_name]      = self.merge_columns.pop(old_name, [])
+        self.output_columns[new_name]     = self.output_columns.pop(old_name, [])
+        self.only_order_columns[new_name] = self.only_order_columns.pop(old_name, False)
+        self.save()
 
     def update_config(self, name, values):
         if name in self.configs:
@@ -881,6 +891,7 @@ class XMLParserApp(tk.Tk):
         menubar.add_cascade(label="Profiles", menu=profiles_menu)
         profiles_menu.add_command(label="Export profile…", command=self.export_profile)
         profiles_menu.add_command(label="Import profile…", command=self.import_profile)
+        profiles_menu.add_command(label="Rename profile…", command=self.rename_profile)
 
         dev_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Dev", menu=dev_menu)
@@ -1239,6 +1250,45 @@ class XMLParserApp(tk.Tk):
         self.update_config_dropdown()
         self.config_var.set(name)
         messagebox.showinfo("Import Profile", f'Profile "{name}" imported successfully.', parent=self)
+
+    def rename_profile(self):
+        selected = self.config_var.get()
+        if not selected or selected == "No configs":
+            messagebox.showwarning("Rename Profile", "No profile selected.", parent=self)
+            return
+        self._do_rename_profile(selected)
+
+    def _do_rename_profile(self, old_name, prefill_name=None):
+        new_name = simpledialog.askstring(
+            "Rename Profile",
+            f'Rename "{old_name}" to:',
+            initialvalue=prefill_name if prefill_name is not None else old_name,
+            parent=self,
+        )
+        if not new_name:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == old_name:
+            return
+
+        if new_name in self.settings_manager.configs:
+            choice = messagebox.askquestion(
+                "Profile Exists",
+                f'A profile named "{new_name}" already exists.\n\nOverwrite it?',
+                icon="warning",
+                type=messagebox.YESNOCANCEL,
+                parent=self,
+            )
+            if choice == "cancel":
+                return
+            if choice == "no":
+                self._do_rename_profile(old_name, prefill_name=new_name)
+                return
+            self.settings_manager.delete_config(new_name)
+
+        self.settings_manager.rename_config(old_name, new_name)
+        self.update_config_dropdown()
+        self.config_var.set(new_name)
 
     def on_resize(self, event):
         if event.widget == self:
