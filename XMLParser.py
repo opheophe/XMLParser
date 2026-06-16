@@ -200,13 +200,7 @@ class SettingsManager:
     def get_merge_columns(self, name):
         return self.merge_columns.get(name, [])
 
-    def validate_window_position(self):
-        root = tk.Tk()
-        root.withdraw()
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        root.destroy()
-
+    def validate_window_position(self, screen_width, screen_height):
         tolerance = 50
         if (self.window_x < -tolerance or
             self.window_y < -tolerance or
@@ -214,8 +208,8 @@ class SettingsManager:
             self.window_y + self.window_height > screen_height + tolerance):
             self.window_x = 100
             self.window_y = 100
-            self.window_width = 1500
-            self.window_height = 1200
+            self.window_width = 1000
+            self.window_height = 800
             self.save()
 
 
@@ -769,7 +763,10 @@ class XMLParserApp(tk.Tk):
         super().__init__()
 
         self.settings_manager = SettingsManager()
-        self.settings_manager.validate_window_position()
+        self.update_idletasks()
+        self.settings_manager.validate_window_position(
+            self.winfo_screenwidth(), self.winfo_screenheight()
+        )
 
         self.title("XML Parser")
         self.geometry(f"{self.settings_manager.window_width}x{self.settings_manager.window_height}+{self.settings_manager.window_x}+{self.settings_manager.window_y}")
@@ -1025,41 +1022,25 @@ class XMLParserApp(tk.Tk):
                                             disabledforeground="black")
         self.export_excel_button.pack(side=tk.LEFT, padx=10)
 
+        self._status_info = None  # message to show in popup
         self.status_border = tk.Frame(button_frame, bd=0)
         self.status_inner  = tk.Frame(self.status_border, bd=0)
         self.status_label  = tk.Label(self.status_inner, padx=10, pady=3,
-                                      font=("TkDefaultFont", 9, "bold"))
+                                      font=("TkDefaultFont", 9, "bold"),
+                                      cursor="hand2")
         self.status_label.pack()
         self.status_inner.pack(padx=1, pady=1)
+        self.status_label.bind("<Button-1>", lambda e: self._show_status_popup())
 
-        # Control sum panel — packed RIGHT first so notebook fills the rest
-        self._ctrl_panel = tk.Frame(self.lower_frame, width=260, relief="groove", bd=1)
-        self._ctrl_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
-        self._ctrl_panel.pack_propagate(False)
-
-        ctrl_header = tk.Label(self._ctrl_panel, text="Control Sums",
-                               font=("TkDefaultFont", 9, "bold"))
-        ctrl_header.pack(pady=(6, 2))
-
-        ctrl_scroll_frame = tk.Frame(self._ctrl_panel)
-        ctrl_scroll_frame.pack(fill=tk.BOTH, expand=True)
-        self._ctrl_canvas = tk.Canvas(ctrl_scroll_frame, highlightthickness=0)
-        ctrl_vsb = ttk.Scrollbar(ctrl_scroll_frame, orient="vertical",
-                                 command=self._ctrl_canvas.yview)
-        ctrl_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self._ctrl_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self._ctrl_canvas.configure(yscrollcommand=ctrl_vsb.set)
-
-        self._ctrl_inner = tk.Frame(self._ctrl_canvas)
-        self._ctrl_canvas_win = self._ctrl_canvas.create_window(
-            (0, 0), window=self._ctrl_inner, anchor="nw")
-        self._ctrl_inner.bind("<Configure>", lambda e: self._ctrl_canvas.configure(
-            scrollregion=self._ctrl_canvas.bbox("all")))
-        self._ctrl_canvas.bind("<Configure>", lambda e: self._ctrl_canvas.itemconfig(
-            self._ctrl_canvas_win, width=e.width))
-
-        tk.Label(self._ctrl_inner, text="Parse a file to see sums.",
-                 fg="gray", wraplength=230).pack(padx=8, pady=8)
+        self._ctrl_sum_data = None  # (parsed_sums, signed_raw_sums, mismatch)
+        self.ctrl_sum_border = tk.Frame(button_frame, bd=0)
+        self.ctrl_sum_inner  = tk.Frame(self.ctrl_sum_border, bd=0)
+        self.ctrl_sum_btn    = tk.Label(self.ctrl_sum_inner, padx=10, pady=3,
+                                        font=("TkDefaultFont", 9, "bold"),
+                                        cursor="hand2")
+        self.ctrl_sum_btn.pack()
+        self.ctrl_sum_inner.pack(padx=1, pady=1)
+        self.ctrl_sum_btn.bind("<Button-1>", lambda e: self._show_ctrl_sum_popup())
 
         # Notebook — LEFT, fills remaining space
         self.notebook = ttk.Notebook(self.lower_frame)
@@ -1121,8 +1102,10 @@ class XMLParserApp(tk.Tk):
             self.settings_manager.window_height = self.winfo_height()
 
     def on_close(self):
-        self.settings_manager.window_x = self.winfo_x()
-        self.settings_manager.window_y = self.winfo_y()
+        self.settings_manager.window_x      = self.winfo_x()
+        self.settings_manager.window_y      = self.winfo_y()
+        self.settings_manager.window_width  = self.winfo_width()
+        self.settings_manager.window_height = self.winfo_height()
         self.settings_manager.save()
         self.destroy()
 
@@ -1568,46 +1551,86 @@ class XMLParserApp(tk.Tk):
         return results
 
     def _update_control_panel(self, parsed_sums, raw_sums, signed_raw_sums=None):
-        for child in self._ctrl_inner.winfo_children():
-            child.destroy()
+        ref_sums   = signed_raw_sums if signed_raw_sums is not None else raw_sums
+        raw_abs    = sum(ref_sums.values())
+        parsed_abs = sum(parsed_sums.values())
+        mismatch   = abs(raw_abs - parsed_abs) > 0.005
 
-        lbl_pad = {"padx": 8, "pady": (6, 1), "anchor": "w"}
-        sub_pad = {"padx": 16, "pady": 0}
+        self._ctrl_sum_data = (parsed_sums, ref_sums, mismatch)
+
+        btn_bg  = "#E74C3C" if mismatch else "#27AE60"
+        btn_fg  = "#FEE" if mismatch else "#EAF7EE"
+        btn_txt = "Control sums: MISMATCH" if mismatch else "Control sums: OK"
+        self.ctrl_sum_border.config(bg=btn_bg)
+        self.ctrl_sum_inner.config(bg=btn_fg)
+        self.ctrl_sum_btn.config(text=btn_txt, fg="#1E8449" if not mismatch else "#C0392B",
+                                 bg=btn_fg)
+        self.ctrl_sum_border.pack(side=tk.LEFT, padx=(6, 0))
+
+    def _show_status_popup(self):
+        if not self._status_info:
+            return
+        title, message, color = self._status_info
+        win = tk.Toplevel(self)
+        win.title("Parse Status")
+        win.resizable(False, False)
+        win.minsize(300, 0)
+
+        header = tk.Label(win, text=title, font=("TkDefaultFont", 10, "bold"),
+                          fg=color, padx=16, pady=8, anchor="w")
+        header.pack(fill=tk.X)
+
+        ttk.Separator(win, orient="horizontal").pack(fill=tk.X, padx=12, pady=4)
+
+        tk.Label(win, text=message, wraplength=320, justify="left",
+                 padx=16, pady=8, anchor="w").pack(fill=tk.X)
+
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=(4, 12))
+
+        win.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width()  - win.winfo_width())  // 2
+        y = self.winfo_y() + (self.winfo_height() - win.winfo_height()) // 2
+        win.geometry(f"+{x}+{y}")
+
+    def _show_ctrl_sum_popup(self):
+        if not self._ctrl_sum_data:
+            return
+        parsed_sums, ref_sums, mismatch = self._ctrl_sum_data
+
+        win = tk.Toplevel(self)
+        win.title("Control Sums")
+        win.resizable(True, False)
+        win.minsize(280, 0)
+
+        lbl_pad = {"padx": 12, "pady": (8, 2), "anchor": "w"}
+        sub_pad = {"padx": 24, "pady": 1}
 
         for tab_name in parsed_sums:
-            tk.Label(self._ctrl_inner, text=tab_name,
+            tk.Label(win, text=tab_name,
                      font=("TkDefaultFont", 9, "bold")).pack(**lbl_pad)
 
-            raw_val    = raw_sums.get(tab_name, 0.0)
+            raw_val    = ref_sums.get(tab_name, 0.0)
             parsed_val = parsed_sums[tab_name]
 
             for label, value in (("In XML:", raw_val), ("Parsed:", parsed_val)):
-                row_f = tk.Frame(self._ctrl_inner)
+                row_f = tk.Frame(win)
                 row_f.pack(fill=tk.X, **sub_pad)
-                tk.Label(row_f, text=label, anchor="w", width=8,
+                tk.Label(row_f, text=label, anchor="w", width=9,
                          font=("TkDefaultFont", 9)).pack(side=tk.LEFT)
                 color = "#E74C3C" if value < 0 else "#1A5276"
                 tk.Label(row_f, text=f"{value:,.2f}", anchor="e",
                          font=("TkDefaultFont", 9), fg=color).pack(side=tk.RIGHT)
 
-        ttk.Separator(self._ctrl_inner, orient="horizontal").pack(fill=tk.X, padx=8, pady=6)
-
-        # Use signed raw sums so that entries sharing a tab with opposite signs
-        # don't produce a false mismatch (e.g. Positive AmountDebit + Negative
-        # AmountCredit → net signed total should equal the parsed net total).
-        ref_sums = signed_raw_sums if signed_raw_sums is not None else raw_sums
-        raw_abs    = sum(ref_sums.values())
-        parsed_abs = sum(parsed_sums.values())
-        mismatch   = abs(raw_abs - parsed_abs) > 0.005
+        ttk.Separator(win, orient="horizontal").pack(fill=tk.X, padx=12, pady=8)
 
         chip_bg  = "#E74C3C" if mismatch else "#27AE60"
-        chip_txt = "MISMATCH" if mismatch else "OK"
-        chip_f = tk.Frame(self._ctrl_inner, bg=chip_bg)
-        chip_f.pack(padx=8, pady=4, anchor="w")
+        chip_txt = "MISMATCH" if mismatch else "Sums match — no values lost or duplicated during parsing"
+        chip_f = tk.Frame(win, bg=chip_bg)
+        chip_f.pack(padx=12, pady=(0, 10), anchor="w")
         tk.Label(chip_f, text=chip_txt, bg=chip_bg, fg="white",
                  font=("TkDefaultFont", 9, "bold"), padx=8, pady=3).pack()
 
-        self._ctrl_canvas.configure(scrollregion=self._ctrl_canvas.bbox("all"))
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=(0, 10))
 
     # ── main parse/display ────────────────────────────────────────────────────
 
@@ -1725,12 +1748,29 @@ class XMLParserApp(tk.Tk):
                 self.status_inner.config(bg="#FEF0E7")
                 self.status_label.config(text="⚠ Value columns hidden",
                                          fg="#D35400", bg="#FEF0E7")
+                self._status_info = (
+                    "⚠ Value columns hidden",
+                    "One or more amount columns were detected but hidden because "
+                    "they could not be unambiguously matched to a configured value tag.\n\n"
+                    "Check your config's Value Tags and make sure each tag path is "
+                    "unique enough to match exactly the columns you expect.",
+                    "#E67E22"
+                )
             else:
                 self.status_border.config(bg="#27AE60")
                 self.status_inner.config(bg="#EAF7EE")
                 self.status_label.config(text="✓ Parsed successfully",
                                          fg="#1E8449", bg="#EAF7EE")
+                self._status_info = (
+                    "✓ Parsed successfully",
+                    "All files were read and parsed without errors.\n\n"
+                    "Rows and columns have been populated in the tabs below. "
+                    "Check the Control Sums button to verify that no values were "
+                    "lost or duplicated during parsing.",
+                    "#27AE60"
+                )
             self.status_border.pack(side=tk.LEFT, padx=(10, 0))
+            self.bell()
 
             parsed_sums              = self._calc_parsed_sums()
             raw_sums, signed_raw_sums = self._calc_raw_xml_sums(all_roots, config_tags)
