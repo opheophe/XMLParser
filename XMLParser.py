@@ -72,6 +72,9 @@ class SettingsManager:
         self.last_directory = ""
         self.last_selected_config = ""
         self.decimal_separator = "english"
+        self.export_setting = "view"
+        self.export_auto_dir_csv = ""
+        self.export_auto_dir_excel = ""
         self.window_x = 100
         self.window_y = 100
         self.window_width = 1000
@@ -105,6 +108,9 @@ class SettingsManager:
                 self.last_directory = self.config["General"].get("last_directory", "")
                 self.last_selected_config = self.config["General"].get("last_selected_config", "")
                 self.decimal_separator = self.config["General"].get("decimal_separator", "english")
+                self.export_setting = self.config["General"].get("export_setting", "view")
+                self.export_auto_dir_csv = self.config["General"].get("export_auto_dir_csv", "")
+                self.export_auto_dir_excel = self.config["General"].get("export_auto_dir_excel", "")
 
             self.configs = {}
             self.merge_columns = {}
@@ -143,7 +149,10 @@ class SettingsManager:
         self.config["General"] = {
             "last_directory": self.last_directory,
             "last_selected_config": self.last_selected_config,
-            "decimal_separator": self.decimal_separator
+            "decimal_separator": self.decimal_separator,
+            "export_setting": self.export_setting,
+            "export_auto_dir_csv": self.export_auto_dir_csv,
+            "export_auto_dir_excel": self.export_auto_dir_excel,
         }
 
         for config_name, values in self.configs.items():
@@ -928,6 +937,9 @@ class XMLParserApp(tk.Tk):
         settings_menu.add_command(label="Configs", command=self.open_configs)
         settings_menu.add_separator()
 
+        settings_menu.add_command(label="Export setting", command=self.open_export_setting_dialog)
+        settings_menu.add_separator()
+
         decimal_menu = tk.Menu(settings_menu, tearoff=0)
         settings_menu.add_cascade(label="Decimal separator", menu=decimal_menu)
         decimal_menu.add_radiobutton(label="English  (1 234.56)", variable=self.decimal_var,
@@ -1108,6 +1120,44 @@ class XMLParserApp(tk.Tk):
     def on_decimal_change(self):
         self.settings_manager.decimal_separator = self.decimal_var.get()
         self.settings_manager.save()
+
+    def open_export_setting_dialog(self):
+        OPTIONS = [
+            ("View", "view"),
+            ("Export CSV [File picker]", "csv_picker"),
+            ("Export Excel [File picker]", "excel_picker"),
+            ("Export CSV [Save automatically]", "csv_auto"),
+            ("Export Excel [Save automatically]", "excel_auto"),
+        ]
+        labels = [o[0] for o in OPTIONS]
+        label_to_value = {o[0]: o[1] for o in OPTIONS}
+        value_to_label = {o[1]: o[0] for o in OPTIONS}
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Export setting")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        tk.Label(dlg, text="When opening an XML file:", anchor="w").pack(
+            padx=20, pady=(15, 4), fill=tk.X)
+
+        current_label = value_to_label.get(self.settings_manager.export_setting, "View")
+        var = tk.StringVar(value=current_label)
+        cb = ttk.Combobox(dlg, textvariable=var, values=labels, state="readonly", width=34)
+        cb.pack(padx=20, pady=(0, 10))
+
+        def on_ok():
+            self.settings_manager.export_setting = label_to_value[var.get()]
+            self.settings_manager.save()
+            dlg.destroy()
+
+        tk.Button(dlg, text="OK", command=on_ok, width=10).pack(pady=(0, 15))
+
+        dlg.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dlg.winfo_reqwidth()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dlg.winfo_reqheight()) // 2
+        dlg.geometry(f"+{x}+{y}")
 
     def open_program_folder(self):
         if getattr(sys, 'frozen', False):
@@ -1999,6 +2049,7 @@ class XMLParserApp(tk.Tk):
                                for name, (cols, rows, fmts) in merged.items()])
             self.export_button.config(state="normal")
             self.export_excel_button.config(state="normal")
+            self._auto_export_if_needed()
 
             if hidden:
                 self.status_border.config(bg="#E67E22")
@@ -2181,6 +2232,11 @@ class XMLParserApp(tk.Tk):
         if not file_path:
             return
 
+        self._write_csv(file_path)
+
+    def _write_csv(self, file_path):
+        current_idx = self.notebook.index(self.notebook.select())
+        tab_name, columns, rows, col_formats = self.tab_data[current_idx]
         try:
             swedish = self.settings_manager.decimal_separator == "swedish"
             df = pd.DataFrame(rows, columns=columns)
@@ -2216,6 +2272,9 @@ class XMLParserApp(tk.Tk):
         if not file_path:
             return
 
+        self._write_excel(file_path)
+
+    def _write_excel(self, file_path):
         try:
             swedish = self.settings_manager.decimal_separator == "swedish"
             with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
@@ -2248,6 +2307,59 @@ class XMLParserApp(tk.Tk):
             self.show_export_dialog(file_path)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export Excel: {str(e)}")
+
+    def _auto_export_if_needed(self):
+        setting = self.settings_manager.export_setting
+        if setting == "view":
+            return
+        elif setting == "csv_picker":
+            self.export_csv()
+        elif setting == "excel_picker":
+            self.export_excel()
+        elif setting == "csv_auto":
+            self._export_csv_auto()
+        elif setting == "excel_auto":
+            self._export_excel_auto()
+
+    def _export_csv_auto(self):
+        auto_dir = self.settings_manager.export_auto_dir_csv
+        if not auto_dir or not os.path.isdir(auto_dir):
+            current_idx = self.notebook.index(self.notebook.select())
+            tab_name = self.tab_data[current_idx][0]
+            file_path = filedialog.asksaveasfilename(
+                title="Export to CSV — choose save location",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                defaultextension=".csv",
+                initialdir=self._initial_dir(),
+                initialfile=self.default_filename(".csv", tab_name)
+            )
+            if not file_path:
+                return
+            self.settings_manager.export_auto_dir_csv = os.path.dirname(file_path)
+            self.settings_manager.save()
+        else:
+            current_idx = self.notebook.index(self.notebook.select())
+            tab_name = self.tab_data[current_idx][0]
+            file_path = os.path.join(auto_dir, self.default_filename(".csv", tab_name))
+        self._write_csv(file_path)
+
+    def _export_excel_auto(self):
+        auto_dir = self.settings_manager.export_auto_dir_excel
+        if not auto_dir or not os.path.isdir(auto_dir):
+            file_path = filedialog.asksaveasfilename(
+                title="Export to Excel — choose save location",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                defaultextension=".xlsx",
+                initialdir=self._initial_dir(),
+                initialfile=self.default_filename(".xlsx")
+            )
+            if not file_path:
+                return
+            self.settings_manager.export_auto_dir_excel = os.path.dirname(file_path)
+            self.settings_manager.save()
+        else:
+            file_path = os.path.join(auto_dir, self.default_filename(".xlsx"))
+        self._write_excel(file_path)
 
 
 if __name__ == "__main__":
